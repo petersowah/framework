@@ -47,6 +47,7 @@ class DatabaseEloquentBelongsToManySyncReturnValueTypeTest extends TestCase
             $table->foreign('article_id')->references('id')->on('articles');
             $table->integer('user_id')->unsigned();
             $table->foreign('user_id')->references('id')->on('users');
+            $table->boolean('visible')->default(false);
         });
     }
 
@@ -85,7 +86,29 @@ class DatabaseEloquentBelongsToManySyncReturnValueTypeTest extends TestCase
         $changes = $user->articles()->sync($articleIDs);
 
         collect($changes['attached'])->map(function ($id) {
-            $this->assertTrue(gettype($id) === (new BelongsToManySyncTestTestArticle)->getKeyType());
+            $this->assertSame(gettype($id), (new BelongsToManySyncTestTestArticle)->getKeyType());
+        });
+
+        $user->articles->each(function (BelongsToManySyncTestTestArticle $article) {
+            $this->assertSame('0', $article->pivot->visible);
+        });
+    }
+
+    public function testSyncWithPivotDefaultsReturnValueType()
+    {
+        $this->seedData();
+
+        $user = BelongsToManySyncTestTestUser::query()->first();
+        $articleIDs = BelongsToManySyncTestTestArticle::all()->pluck('id')->toArray();
+
+        $changes = $user->articles()->syncWithPivotValues($articleIDs, ['visible' => true]);
+
+        collect($changes['attached'])->each(function ($id) {
+            $this->assertSame(gettype($id), (new BelongsToManySyncTestTestArticle)->getKeyType());
+        });
+
+        $user->articles->each(function (BelongsToManySyncTestTestArticle $article) {
+            $this->assertSame('1', $article->pivot->visible);
         });
     }
 
@@ -118,7 +141,7 @@ class BelongsToManySyncTestTestUser extends Eloquent
 
     public function articles()
     {
-        return $this->belongsToMany(BelongsToManySyncTestTestArticle::class, 'article_user', 'user_id', 'article_id');
+        return $this->belongsToMany(BelongsToManySyncTestTestArticle::class, 'article_user', 'user_id', 'article_id')->withPivot('visible');
     }
 }
 

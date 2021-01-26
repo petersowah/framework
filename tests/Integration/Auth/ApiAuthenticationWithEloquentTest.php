@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Orchestra\Testbench\TestCase;
 
+/**
+ * @requires extension pdo_mysql
+ */
 class ApiAuthenticationWithEloquentTest extends TestCase
 {
     protected function getEnvironmentSetUp($app)
@@ -39,7 +42,7 @@ class ApiAuthenticationWithEloquentTest extends TestCase
 
         $this->expectException(QueryException::class);
 
-        $this->expectExceptionMessage("Access denied for user 'root'@'localhost'");
+        $this->expectExceptionMessage("Access denied for user 'root'@");
 
         try {
             $this->withoutExceptionHandling()->get('/auth', ['Authorization' => 'Bearer whatever']);

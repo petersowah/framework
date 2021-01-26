@@ -64,6 +64,13 @@ class Mailer implements MailerContract, MailQueueContract
     protected $replyTo;
 
     /**
+     * The global return path address.
+     *
+     * @var array
+     */
+    protected $returnPath;
+
+    /**
      * The global to address and name.
      *
      * @var array
@@ -123,6 +130,17 @@ class Mailer implements MailerContract, MailQueueContract
     public function alwaysReplyTo($address, $name = null)
     {
         $this->replyTo = compact('address', 'name');
+    }
+
+    /**
+     * Set the global return path address.
+     *
+     * @param  string  $address
+     * @return void
+     */
+    public function alwaysReturnPath($address)
+    {
+        $this->returnPath = compact('address');
     }
 
     /**
@@ -334,13 +352,13 @@ class Mailer implements MailerContract, MailQueueContract
     protected function addContent($message, $view, $plain, $raw, $data)
     {
         if (isset($view)) {
-            $message->setBody($this->renderView($view, $data), 'text/html');
+            $message->setBody($this->renderView($view, $data) ?: ' ', 'text/html');
         }
 
         if (isset($plain)) {
             $method = isset($view) ? 'addPart' : 'setBody';
 
-            $message->$method($this->renderView($plain, $data), 'text/plain');
+            $message->$method($this->renderView($plain, $data) ?: ' ', 'text/plain');
         }
 
         if (isset($raw)) {
@@ -380,7 +398,7 @@ class Mailer implements MailerContract, MailQueueContract
     /**
      * Queue a new e-mail message for sending.
      *
-     * @param  \Illuminate\Contracts\Mail\Mailable  $view
+     * @param  \Illuminate\Contracts\Mail\Mailable|string|array  $view
      * @param  string|null  $queue
      * @return mixed
      *
@@ -482,6 +500,10 @@ class Mailer implements MailerContract, MailQueueContract
             $message->replyTo($this->replyTo['address'], $this->replyTo['name']);
         }
 
+        if (! empty($this->returnPath['address'])) {
+            $message->returnPath($this->returnPath['address']);
+        }
+
         return $message;
     }
 
@@ -493,6 +515,8 @@ class Mailer implements MailerContract, MailQueueContract
      */
     protected function sendSwiftMessage($message)
     {
+        $this->failedRecipients = [];
+
         try {
             return $this->swift->send($message, $this->failedRecipients);
         } finally {

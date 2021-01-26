@@ -1,13 +1,14 @@
 <?php
 
-namespace Illuminate\Tests\Integration\Database\EloquentBelongsToManyTest;
+namespace Illuminate\Tests\Integration\Database;
 
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\MultipleRecordsFoundException;
+use Illuminate\Database\RecordsNotFoundException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Tests\Integration\Database\DatabaseTestCase;
 
 /**
  * @group integration
@@ -29,6 +30,31 @@ class QueryBuilderTest extends DatabaseTestCase
             ['title' => 'Foo Post', 'content' => 'Lorem Ipsum.', 'created_at' => new Carbon('2017-11-12 13:14:15')],
             ['title' => 'Bar Post', 'content' => 'Lorem Ipsum.', 'created_at' => new Carbon('2018-01-02 03:04:05')],
         ]);
+    }
+
+    public function testSole()
+    {
+        $expected = ['id' => '1', 'title' => 'Foo Post'];
+
+        $this->assertSame($expected, (array) DB::table('posts')->where('title', 'Foo Post')->select('id', 'title')->sole());
+    }
+
+    public function testSoleFailsForMultipleRecords()
+    {
+        DB::table('posts')->insert([
+            ['title' => 'Foo Post', 'content' => 'Lorem Ipsum.', 'created_at' => new Carbon('2017-11-12 13:14:15')],
+        ]);
+
+        $this->expectException(MultipleRecordsFoundException::class);
+
+        DB::table('posts')->where('title', 'Foo Post')->sole();
+    }
+
+    public function testSoleFailsIfNoRecords()
+    {
+        $this->expectException(RecordsNotFoundException::class);
+
+        DB::table('posts')->where('title', 'Baz Post')->sole();
     }
 
     public function testSelect()
@@ -96,6 +122,15 @@ class QueryBuilderTest extends DatabaseTestCase
         $subQuery = function ($query) {
             $query->selectRaw("'Sub query value'");
         };
+
+        $this->assertTrue(DB::table('posts')->where($subQuery, 'Sub query value')->exists());
+        $this->assertFalse(DB::table('posts')->where($subQuery, 'Does not match')->exists());
+        $this->assertTrue(DB::table('posts')->where($subQuery, '!=', 'Does not match')->exists());
+    }
+
+    public function testWhereValueSubQueryBuilder()
+    {
+        $subQuery = DB::table('posts')->selectRaw("'Sub query value'");
 
         $this->assertTrue(DB::table('posts')->where($subQuery, 'Sub query value')->exists());
         $this->assertFalse(DB::table('posts')->where($subQuery, 'Does not match')->exists());

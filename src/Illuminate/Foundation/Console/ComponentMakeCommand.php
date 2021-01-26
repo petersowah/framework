@@ -41,7 +41,7 @@ class ComponentMakeCommand extends GeneratorCommand
             return false;
         }
 
-        if ($this->input->getParameterOption('--view') !== false) {
+        if (! $this->option('inline')) {
             $this->writeView();
         }
     }
@@ -53,18 +53,22 @@ class ComponentMakeCommand extends GeneratorCommand
      */
     protected function writeView()
     {
-        $view = $this->option('view')
-                    ? $this->option('view')
-                    : 'components.'.Str::kebab(class_basename($this->argument('name')));
-
-        $path = resource_path('views').'/'.str_replace('.', '/', $view);
+        $path = $this->viewPath(
+            str_replace('.', '/', 'components.'.$this->getView()).'.blade.php'
+        );
 
         if (! $this->files->isDirectory(dirname($path))) {
             $this->files->makeDirectory(dirname($path), 0777, true, true);
         }
 
+        if ($this->files->exists($path) && ! $this->option('force')) {
+            $this->error('View already exists!');
+
+            return;
+        }
+
         file_put_contents(
-            $path.'.blade.php',
+            $path,
             '<div>
     <!-- '.Inspiring::quote().' -->
 </div>'
@@ -79,11 +83,35 @@ class ComponentMakeCommand extends GeneratorCommand
      */
     protected function buildClass($name)
     {
+        if ($this->option('inline')) {
+            return str_replace(
+                'DummyView',
+                "<<<'blade'\n<div>\n    <!-- ".Inspiring::quote()." -->\n</div>\nblade",
+                parent::buildClass($name)
+            );
+        }
+
         return str_replace(
             'DummyView',
-            $this->option('view') ?? 'components.'.Str::kebab(class_basename($name)),
+            'view(\'components.'.$this->getView().'\')',
             parent::buildClass($name)
         );
+    }
+
+    /**
+     * Get the view name relative to the components directory.
+     *
+     * @return string view
+     */
+    protected function getView()
+    {
+        $name = str_replace('\\', '/', $this->argument('name'));
+
+        return collect(explode('/', $name))
+            ->map(function ($part) {
+                return Str::kebab($part);
+            })
+            ->implode('.');
     }
 
     /**
@@ -104,7 +132,7 @@ class ComponentMakeCommand extends GeneratorCommand
      */
     protected function getDefaultNamespace($rootNamespace)
     {
-        return $rootNamespace.'\ViewComponents';
+        return $rootNamespace.'\View\Components';
     }
 
     /**
@@ -116,7 +144,7 @@ class ComponentMakeCommand extends GeneratorCommand
     {
         return [
             ['force', null, InputOption::VALUE_NONE, 'Create the class even if the component already exists'],
-            ['view', null, InputOption::VALUE_OPTIONAL, 'Create a new Blade template for the component'],
+            ['inline', null, InputOption::VALUE_NONE, 'Create a component that renders an inline view'],
         ];
     }
 }

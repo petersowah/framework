@@ -2,8 +2,9 @@
 
 namespace Illuminate\View\Engines;
 
-use ErrorException;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\View\Compilers\CompilerInterface;
+use Illuminate\View\ViewException;
 use Throwable;
 
 class CompilerEngine extends PhpEngine
@@ -23,13 +24,16 @@ class CompilerEngine extends PhpEngine
     protected $lastCompiled = [];
 
     /**
-     * Create a new Blade view engine instance.
+     * Create a new compiler engine instance.
      *
      * @param  \Illuminate\View\Compilers\CompilerInterface  $compiler
+     * @param  \Illuminate\Filesystem\Filesystem|null  $files
      * @return void
      */
-    public function __construct(CompilerInterface $compiler)
+    public function __construct(CompilerInterface $compiler, Filesystem $files = null)
     {
+        parent::__construct($files ?: new Filesystem);
+
         $this->compiler = $compiler;
     }
 
@@ -51,12 +55,10 @@ class CompilerEngine extends PhpEngine
             $this->compiler->compile($path);
         }
 
-        $compiled = $this->compiler->getCompiledPath($path);
-
         // Once we have the path to the compiled file, we will evaluate the paths with
         // typical PHP just like any other templates. We also keep a stack of views
         // which have been rendered for right exception messages to be generated.
-        $results = $this->evaluatePath($compiled, $data);
+        $results = $this->evaluatePath($this->compiler->getCompiledPath($path), $data);
 
         array_pop($this->lastCompiled);
 
@@ -74,7 +76,7 @@ class CompilerEngine extends PhpEngine
      */
     protected function handleViewException(Throwable $e, $obLevel)
     {
-        $e = new ErrorException($this->getMessage($e), 0, 1, $e->getFile(), $e->getLine(), $e);
+        $e = new ViewException($this->getMessage($e), 0, 1, $e->getFile(), $e->getLine(), $e);
 
         parent::handleViewException($e, $obLevel);
     }

@@ -3,7 +3,6 @@
 namespace Illuminate\Tests\Database;
 
 use BadMethodCallException;
-use Carbon\Carbon;
 use Closure;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\ConnectionResolverInterface;
@@ -16,6 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as BaseBuilder;
 use Illuminate\Database\Query\Grammars\Grammar;
 use Illuminate\Database\Query\Processors\Processor;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection as BaseCollection;
 use Mockery as m;
 use PHPUnit\Framework\TestCase;
@@ -31,7 +31,9 @@ class DatabaseEloquentBuilderTest extends TestCase
     public function testFindMethod()
     {
         $builder = m::mock(Builder::class.'[first]', [$this->getMockQueryBuilder()]);
-        $builder->setModel($this->getMockModel());
+        $model = $this->getMockModel();
+        $builder->setModel($model);
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
         $builder->getQuery()->shouldReceive('where')->once()->with('foo_table.foo', '=', 'bar');
         $builder->shouldReceive('first')->with(['column'])->andReturn('baz');
 
@@ -76,6 +78,7 @@ class DatabaseEloquentBuilderTest extends TestCase
     public function testFindOrNewMethodModelFound()
     {
         $model = $this->getMockModel();
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
         $model->shouldReceive('findOrNew')->once()->andReturn('baz');
 
         $builder = m::mock(Builder::class.'[first]', [$this->getMockQueryBuilder()]);
@@ -91,6 +94,7 @@ class DatabaseEloquentBuilderTest extends TestCase
     public function testFindOrNewMethodModelNotFound()
     {
         $model = $this->getMockModel();
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
         $model->shouldReceive('findOrNew')->once()->andReturn(m::mock(Model::class));
 
         $builder = m::mock(Builder::class.'[first]', [$this->getMockQueryBuilder()]);
@@ -109,7 +113,9 @@ class DatabaseEloquentBuilderTest extends TestCase
         $this->expectException(ModelNotFoundException::class);
 
         $builder = m::mock(Builder::class.'[first]', [$this->getMockQueryBuilder()]);
-        $builder->setModel($this->getMockModel());
+        $model = $this->getMockModel();
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
+        $builder->setModel($model);
         $builder->getQuery()->shouldReceive('where')->once()->with('foo_table.foo', '=', 'bar');
         $builder->shouldReceive('first')->with(['column'])->andReturn(null);
         $builder->findOrFail('bar', ['column']);
@@ -454,12 +460,14 @@ class DatabaseEloquentBuilderTest extends TestCase
             return $bar;
         });
 
-        Builder::macro('bam', [Builder::class, 'getQuery']);
+        Builder::macro('bam', function () {
+            return $this->getQuery();
+        });
 
         $builder = $this->getBuilder();
 
         $this->assertTrue(Builder::hasGlobalMacro('foo'));
-        $this->assertEquals($builder->foo('bar'), 'bar');
+        $this->assertEquals('bar', $builder->foo('bar'));
         $this->assertEquals($builder->bam(), $builder->getQuery());
     }
 
@@ -483,7 +491,7 @@ class DatabaseEloquentBuilderTest extends TestCase
         $model->shouldReceive('hydrate')->once()->with($records)->andReturn(new Collection(['hydrated']));
         $models = $builder->getModels(['foo']);
 
-        $this->assertEquals($models, ['hydrated']);
+        $this->assertEquals(['hydrated'], $models);
     }
 
     public function testEagerLoadRelationsLoadTopLevelRelationships()
@@ -607,6 +615,16 @@ class DatabaseEloquentBuilderTest extends TestCase
         $this->assertInstanceOf(Closure::class, $eagers['orders']);
         $this->assertNull($eagers['orders']());
         $this->assertSame('foo', $eagers['orders.lines']());
+
+        $builder = $this->getBuilder();
+        $builder->with('orders.lines', function () {
+            return 'foo';
+        });
+        $eagers = $builder->getEagerLoads();
+
+        $this->assertInstanceOf(Closure::class, $eagers['orders']);
+        $this->assertNull($eagers['orders']());
+        $this->assertSame('foo', $eagers['orders.lines']());
     }
 
     public function testQueryPassThru()
@@ -640,6 +658,11 @@ class DatabaseEloquentBuilderTest extends TestCase
         $builder->getQuery()->shouldReceive('raw')->once()->with('bar')->andReturn('foo');
 
         $this->assertSame('foo', $builder->raw('bar'));
+
+        $builder = $this->getBuilder();
+        $grammar = new Grammar();
+        $builder->getQuery()->shouldReceive('getGrammar')->once()->andReturn($grammar);
+        $this->assertSame($grammar, $builder->getGrammar());
     }
 
     public function testQueryScopes()
@@ -793,6 +816,39 @@ class DatabaseEloquentBuilderTest extends TestCase
         $this->assertSame('select "id", (select count(*) from "eloquent_builder_test_model_close_related_stubs" where "eloquent_builder_test_model_parent_stubs"."foo_id" = "eloquent_builder_test_model_close_related_stubs"."id") as "foo_count" from "eloquent_builder_test_model_parent_stubs"', $builder->toSql());
     }
 
+    public function testWithMin()
+    {
+        $model = new EloquentBuilderTestModelParentStub;
+
+        $builder = $model->withMin('foo', 'price');
+
+        $this->assertSame('select "eloquent_builder_test_model_parent_stubs".*, (select min("eloquent_builder_test_model_close_related_stubs"."price") from "eloquent_builder_test_model_close_related_stubs" where "eloquent_builder_test_model_parent_stubs"."foo_id" = "eloquent_builder_test_model_close_related_stubs"."id") as "foo_min_price" from "eloquent_builder_test_model_parent_stubs"', $builder->toSql());
+    }
+
+    public function testWithMinOnBelongsToMany()
+    {
+        $model = new EloquentBuilderTestModelParentStub;
+
+        $builder = $model->withMin('roles', 'id');
+
+        $this->assertSame('select "eloquent_builder_test_model_parent_stubs".*, (select min("eloquent_builder_test_model_far_related_stubs"."id") from "eloquent_builder_test_model_far_related_stubs" inner join "user_role" on "eloquent_builder_test_model_far_related_stubs"."id" = "user_role"."related_id" where "eloquent_builder_test_model_parent_stubs"."id" = "user_role"."self_id") as "roles_min_id" from "eloquent_builder_test_model_parent_stubs"', $builder->toSql());
+    }
+
+    public function testWithMinOnSelfRelated()
+    {
+        $model = new EloquentBuilderTestModelSelfRelatedStub;
+
+        $sql = $model->withMin('childFoos', 'created_at')->toSql();
+
+        // alias has a dynamic hash, so replace with a static string for comparison
+        $alias = 'self_alias_hash';
+        $aliasRegex = '/\b(laravel_reserved_\d)(\b|$)/i';
+
+        $sql = preg_replace($aliasRegex, $alias, $sql);
+
+        $this->assertSame('select "self_related_stubs".*, (select min("self_alias_hash"."created_at") from "self_related_stubs" as "self_alias_hash" where "self_related_stubs"."id" = "self_alias_hash"."parent_id") as "child_foos_min_created_at" from "self_related_stubs"', $sql);
+    }
+
     public function testWithCountAndConstraintsAndHaving()
     {
         $model = new EloquentBuilderTestModelParentStub;
@@ -852,7 +908,7 @@ class DatabaseEloquentBuilderTest extends TestCase
         $this->assertEquals(['larry', '90210', '90220', 'fooside dr', 29], $builder->getBindings());
     }
 
-    public function testHasWithContraintsAndJoinAndHavingInSubquery()
+    public function testHasWithConstraintsAndJoinAndHavingInSubquery()
     {
         $model = new EloquentBuilderTestModelParentStub;
         $builder = $model->where('bar', 'baz');
@@ -1033,9 +1089,36 @@ class DatabaseEloquentBuilderTest extends TestCase
 
         $int = 1;
 
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
         $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '=', $int);
 
         $builder->whereKey($int);
+    }
+
+    public function testWhereKeyMethodWithStringZero()
+    {
+        $model = new EloquentBuilderTestStubStringPrimaryKey();
+        $builder = $this->getBuilder()->setModel($model);
+        $keyName = $model->getQualifiedKeyName();
+
+        $int = 0;
+
+        $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '=', (string) $int);
+
+        $builder->whereKey($int);
+    }
+
+    public function testWhereKeyMethodWithStringNull()
+    {
+        $model = new EloquentBuilderTestStubStringPrimaryKey();
+        $builder = $this->getBuilder()->setModel($model);
+        $keyName = $model->getQualifiedKeyName();
+
+        $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '=', m::on(function ($argument) {
+            return $argument === null;
+        }));
+
+        $builder->whereKey(null);
     }
 
     public function testWhereKeyMethodWithArray()
@@ -1064,6 +1147,32 @@ class DatabaseEloquentBuilderTest extends TestCase
         $builder->whereKey($collection);
     }
 
+    public function testWhereKeyNotMethodWithStringZero()
+    {
+        $model = new EloquentBuilderTestStubStringPrimaryKey();
+        $builder = $this->getBuilder()->setModel($model);
+        $keyName = $model->getQualifiedKeyName();
+
+        $int = 0;
+
+        $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '!=', (string) $int);
+
+        $builder->whereKeyNot($int);
+    }
+
+    public function testWhereKeyNotMethodWithStringNull()
+    {
+        $model = new EloquentBuilderTestStubStringPrimaryKey();
+        $builder = $this->getBuilder()->setModel($model);
+        $keyName = $model->getQualifiedKeyName();
+
+        $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '!=', m::on(function ($argument) {
+            return $argument === null;
+        }));
+
+        $builder->whereKeyNot(null);
+    }
+
     public function testWhereKeyNotMethodWithInt()
     {
         $model = $this->getMockModel();
@@ -1072,6 +1181,7 @@ class DatabaseEloquentBuilderTest extends TestCase
 
         $int = 1;
 
+        $model->shouldReceive('getKeyType')->once()->andReturn('int');
         $builder->getQuery()->shouldReceive('where')->once()->with($keyName, '!=', $int);
 
         $builder->whereKeyNot($int);
@@ -1240,6 +1350,41 @@ class DatabaseEloquentBuilderTest extends TestCase
         Carbon::setTestNow(null);
     }
 
+    public function testUpsert()
+    {
+        Carbon::setTestNow($now = '2017-10-10 10:10:10');
+
+        $query = m::mock(BaseBuilder::class);
+        $query->shouldReceive('from')->with('foo_table')->andReturn('foo_table');
+        $query->from = 'foo_table';
+
+        $builder = new Builder($query);
+        $model = new EloquentBuilderTestStubStringPrimaryKey;
+        $builder->setModel($model);
+
+        $query->shouldReceive('upsert')->once()
+            ->with([
+                ['email' => 'foo', 'name' => 'bar', 'updated_at' => $now, 'created_at' => $now],
+                ['name' => 'bar2', 'email' => 'foo2', 'updated_at' => $now, 'created_at' => $now],
+            ], ['email'], ['email', 'name', 'updated_at'])->andReturn(2);
+
+        $result = $builder->upsert([['email' => 'foo', 'name' => 'bar'], ['name' => 'bar2', 'email' => 'foo2']], ['email']);
+
+        $this->assertEquals(2, $result);
+
+        Carbon::setTestNow(null);
+    }
+
+    public function testWithCastsMethod()
+    {
+        $builder = new Builder($this->getMockQueryBuilder());
+        $model = $this->getMockModel();
+        $builder->setModel($model);
+
+        $model->shouldReceive('mergeCasts')->with(['foo' => 'bar'])->once();
+        $builder->withCasts(['foo' => 'bar']);
+    }
+
     protected function mockConnectionForModel($model, $database)
     {
         $grammarClass = 'Illuminate\Database\Query\Grammars\\'.$database.'Grammar';
@@ -1250,6 +1395,7 @@ class DatabaseEloquentBuilderTest extends TestCase
         $connection->shouldReceive('query')->andReturnUsing(function () use ($connection, $grammar, $processor) {
             return new BaseBuilder($connection, $grammar, $processor);
         });
+        $connection->shouldReceive('getDatabaseName')->andReturn('database');
         $resolver = m::mock(ConnectionResolverInterface::class, ['connection' => $connection]);
         $class = get_class($model);
         $class::setConnectionResolver($resolver);
@@ -1369,6 +1515,16 @@ class EloquentBuilderTestModelParentStub extends Model
     {
         return $this->belongsTo(EloquentBuilderTestModelCloseRelatedStub::class, 'foo_id')->where('active', true);
     }
+
+    public function roles()
+    {
+        return $this->belongsToMany(
+            EloquentBuilderTestModelFarRelatedStub::class,
+            'user_role',
+            'self_id',
+            'related_id'
+        );
+    }
 }
 
 class EloquentBuilderTestModelCloseRelatedStub extends Model
@@ -1429,4 +1585,13 @@ class EloquentBuilderTestStubWithoutTimestamp extends Model
     const UPDATED_AT = null;
 
     protected $table = 'table';
+}
+
+class EloquentBuilderTestStubStringPrimaryKey extends Model
+{
+    public $incrementing = false;
+
+    protected $table = 'foo_table';
+
+    protected $keyType = 'string';
 }

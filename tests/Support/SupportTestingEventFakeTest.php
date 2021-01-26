@@ -31,6 +31,15 @@ class SupportTestingEventFakeTest extends TestCase
         $this->fake->assertDispatched(EventStub::class);
     }
 
+    public function testAssertDispatchedWithClosure()
+    {
+        $this->fake->dispatch(new EventStub);
+
+        $this->fake->assertDispatched(function (EventStub $event) {
+            return true;
+        });
+    }
+
     public function testAssertDispatchedWithCallbackInt()
     {
         $this->fake->dispatch(EventStub::class);
@@ -75,6 +84,20 @@ class SupportTestingEventFakeTest extends TestCase
         }
     }
 
+    public function testAssertNotDispatchedWithClosure()
+    {
+        $this->fake->dispatch(new EventStub);
+
+        try {
+            $this->fake->assertNotDispatched(function (EventStub $event) {
+                return true;
+            });
+            $this->fail();
+        } catch (ExpectationFailedException $e) {
+            $this->assertThat($e, new ExceptionMessage('The unexpected [Illuminate\Tests\Support\EventStub] event was dispatched.'));
+        }
+    }
+
     public function testAssertDispatchedWithIgnore()
     {
         $dispatcher = m::mock(Dispatcher::class);
@@ -94,6 +117,21 @@ class SupportTestingEventFakeTest extends TestCase
         $fake->assertDispatched('Foo');
         $fake->assertDispatched('Bar');
         $fake->assertNotDispatched('Baz');
+    }
+
+    public function testAssertNothingDispatched()
+    {
+        $this->fake->assertNothingDispatched();
+
+        $this->fake->dispatch(EventStub::class);
+        $this->fake->dispatch(EventStub::class);
+
+        try {
+            $this->fake->assertNothingDispatched();
+            $this->fail();
+        } catch (ExpectationFailedException $e) {
+            $this->assertThat($e, new ExceptionMessage('2 unexpected events were dispatched.'));
+        }
     }
 }
 

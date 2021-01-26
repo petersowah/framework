@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Pivot;
 use Mockery as m;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 
 class DatabaseEloquentPivotTest extends TestCase
 {
@@ -110,7 +111,7 @@ class DatabaseEloquentPivotTest extends TestCase
 
     public function testDeleteMethodDeletesModelByKeys()
     {
-        $pivot = $this->getMockBuilder(Pivot::class)->setMethods(['newQueryWithoutRelationships'])->getMock();
+        $pivot = $this->getMockBuilder(Pivot::class)->onlyMethods(['newQueryWithoutRelationships'])->getMock();
         $pivot->setPivotKeys('foreign', 'other');
         $pivot->foreign = 'foreign.value';
         $pivot->other = 'other.value';
@@ -151,6 +152,31 @@ class DatabaseEloquentPivotTest extends TestCase
 
         $this->assertEquals($model->getCreatedAtColumn(), $pivotWithoutParent->getCreatedAtColumn());
         $this->assertEquals($model->getUpdatedAtColumn(), $pivotWithoutParent->getUpdatedAtColumn());
+    }
+
+    public function testWithoutRelations()
+    {
+        $original = new Pivot();
+
+        $original->pivotParent = 'foo';
+        $original->setRelation('bar', 'baz');
+
+        $this->assertSame('baz', $original->getRelation('bar'));
+
+        $pivot = $original->withoutRelations();
+
+        $this->assertInstanceOf(Pivot::class, $pivot);
+        $this->assertNotSame($pivot, $original);
+        $this->assertSame('foo', $original->pivotParent);
+        $this->assertNull($pivot->pivotParent);
+        $this->assertTrue($original->relationLoaded('bar'));
+        $this->assertFalse($pivot->relationLoaded('bar'));
+
+        $pivot = $original->unsetRelations();
+
+        $this->assertSame($pivot, $original);
+        $this->assertNull($pivot->pivotParent);
+        $this->assertFalse($pivot->relationLoaded('bar'));
     }
 }
 

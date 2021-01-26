@@ -46,6 +46,13 @@ class BladeCompiler extends Compiler implements CompilerInterface
     protected $conditions = [];
 
     /**
+     * All of the registered precompilers.
+     *
+     * @var array
+     */
+    protected $precompilers = [];
+
+    /**
      * The file currently being compiled.
      *
      * @var string
@@ -55,10 +62,10 @@ class BladeCompiler extends Compiler implements CompilerInterface
     /**
      * All of the available compiler functions.
      *
-     * @var array
+     * @var string[]
      */
     protected $compilers = [
-        'Comments',
+        // 'Comments',
         'Extensions',
         'Statements',
         'Echos',
@@ -67,21 +74,21 @@ class BladeCompiler extends Compiler implements CompilerInterface
     /**
      * Array of opening and closing tags for raw echos.
      *
-     * @var array
+     * @var string[]
      */
     protected $rawTags = ['{!!', '!!}'];
 
     /**
      * Array of opening and closing tags for regular echos.
      *
-     * @var array
+     * @var string[]
      */
     protected $contentTags = ['{{', '}}'];
 
     /**
      * Array of opening and closing tags for escaped echos.
      *
-     * @var array
+     * @var string[]
      */
     protected $escapedTags = ['{{{', '}}}'];
 
@@ -112,6 +119,13 @@ class BladeCompiler extends Compiler implements CompilerInterface
      * @var array
      */
     protected $classComponentAliases = [];
+
+    /**
+     * The array of class component namespaces to autoload from.
+     *
+     * @var array
+     */
+    protected $classComponentNamespaces = [];
 
     /**
      * Indicates if component tags should be compiled.
@@ -171,7 +185,7 @@ class BladeCompiler extends Compiler implements CompilerInterface
     protected function getOpenAndClosingPhpTokens($contents)
     {
         return collect(token_get_all($contents))
-            ->pluck($tokenNumber = 0)
+            ->pluck(0)
             ->filter(function ($token) {
                 return in_array($token, [T_OPEN_TAG, T_OPEN_TAG_WITH_ECHO, T_CLOSE_TAG]);
             });
@@ -208,9 +222,16 @@ class BladeCompiler extends Compiler implements CompilerInterface
     {
         [$this->footer, $result] = [[], ''];
 
+        // First we will compile the Blade component tags. This is a precompile style
+        // step which compiles the component Blade tags into @component directives
+        // that may be used by Blade. Then we should call any other precompilers.
         $value = $this->compileComponentTags(
-            $this->storeUncompiledBlocks($value)
+            $this->compileComments($this->storeUncompiledBlocks($value))
         );
+
+        foreach ($this->precompilers as $precompiler) {
+            $value = call_user_func($precompiler, $value);
+        }
 
         // Here we will loop through all of the tokens returned by the Zend lexer and
         // parse each one into the corresponding valid PHP. We will then have this
@@ -230,7 +251,10 @@ class BladeCompiler extends Compiler implements CompilerInterface
             $result = $this->addFooters($result);
         }
 
-        return $result;
+        return str_replace(
+            ['##BEGIN-COMPONENT-CLASS##', '##END-COMPONENT-CLASS##'],
+            '',
+            $result);
     }
 
     /**
@@ -304,7 +328,7 @@ class BladeCompiler extends Compiler implements CompilerInterface
         }
 
         return (new ComponentTagCompiler(
-            $this->classComponentAliases
+            $this->classComponentAliases, $this->classComponentNamespaces, $this
         ))->compile($value);
     }
 
@@ -344,8 +368,8 @@ class BladeCompiler extends Compiler implements CompilerInterface
      */
     protected function addFooters($result)
     {
-        return ltrim($result, PHP_EOL)
-                .PHP_EOL.implode(PHP_EOL, array_reverse($this->footer));
+        return ltrim($result, "\n")
+                ."\n".implode("\n", array_reverse($this->footer));
     }
 
     /**
@@ -519,11 +543,26 @@ class BladeCompiler extends Compiler implements CompilerInterface
      *
      * @param  string  $class
      * @param  string|null  $alias
+     * @param  string  $prefix
      * @return void
      */
-    public function component($class, $alias = null)
+    public function component($class, $alias = null, $prefix = '')
     {
-        $alias = $alias ?: Str::kebab(class_basename($class));
+        if (! is_null($alias) && Str::contains($alias, '\\')) {
+            [$class, $alias] = [$alias, $class];
+        }
+
+        if (is_null($alias)) {
+            $alias = Str::contains($class, '\\View\\Components\\')
+                            ? collect(explode('\\', Str::after($class, '\\View\\Components\\')))->map(function ($segment) {
+                                return Str::kebab($segment);
+                            })->implode(':')
+                            : Str::kebab(class_basename($class));
+        }
+
+        if (! empty($prefix)) {
+            $alias = $prefix.'-'.$alias;
+        }
 
         $this->classComponentAliases[$alias] = $class;
     }
@@ -532,17 +571,50 @@ class BladeCompiler extends Compiler implements CompilerInterface
      * Register an array of class-based components.
      *
      * @param  array  $components
+     * @param  string  $prefix
      * @return void
      */
-    public function components(array $components)
+    public function components(array $components, $prefix = '')
     {
         foreach ($components as $key => $value) {
             if (is_numeric($key)) {
-                static::component($value);
+                $this->component($value, null, $prefix);
             } else {
-                static::component($key, $value);
+                $this->component($key, $value, $prefix);
             }
         }
+    }
+
+    /**
+     * Get the registered class component aliases.
+     *
+     * @return array
+     */
+    public function getClassComponentAliases()
+    {
+        return $this->classComponentAliases;
+    }
+
+    /**
+     * Register a class-based component namespace.
+     *
+     * @param  string  $namespace
+     * @param  string  $prefix
+     * @return void
+     */
+    public function componentNamespace($namespace, $prefix)
+    {
+        $this->classComponentNamespaces[$prefix] = $namespace;
+    }
+
+    /**
+     * Get the registered class component namespaces.
+     *
+     * @return array
+     */
+    public function getClassComponentNamespaces()
+    {
+        return $this->classComponentNamespaces;
     }
 
     /**
@@ -576,7 +648,7 @@ class BladeCompiler extends Compiler implements CompilerInterface
      */
     public function include($path, $alias = null)
     {
-        return $this->aliasInclude($path, $alias);
+        $this->aliasInclude($path, $alias);
     }
 
     /**
@@ -623,6 +695,17 @@ class BladeCompiler extends Compiler implements CompilerInterface
     public function getCustomDirectives()
     {
         return $this->customDirectives;
+    }
+
+    /**
+     * Register a new precompiler.
+     *
+     * @param  callable  $precompiler
+     * @return void
+     */
+    public function precompiler(callable $precompiler)
+    {
+        $this->precompilers[] = $precompiler;
     }
 
     /**

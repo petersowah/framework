@@ -12,7 +12,6 @@ use Illuminate\Mail\Transport\LogTransport;
 use Illuminate\Mail\Transport\MailgunTransport;
 use Illuminate\Mail\Transport\SesTransport;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Manager;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Postmark\ThrowExceptionOnFailurePlugin;
@@ -111,7 +110,7 @@ class MailManager implements FactoryContract
             throw new InvalidArgumentException("Mailer [{$name}] is not defined.");
         }
 
-        // Once we have create the mailer instance, we will set a container instance
+        // Once we have created the mailer instance we will set a container instance
         // on the mailer. This allows us to resolve mailer classes via containers
         // for maximum testability on said classes instead of passing Closures.
         $mailer = new Mailer(
@@ -127,8 +126,8 @@ class MailManager implements FactoryContract
 
         // Next we will set all of the global addresses on this mailer, which allows
         // for easy unification of all "from" addresses as well as easy debugging
-        // of sent messages since they get be sent into a single email address.
-        foreach (['from', 'reply_to', 'to'] as $type) {
+        // of sent messages since these will be sent to a single email address.
+        foreach (['from', 'reply_to', 'to', 'return_path'] as $type) {
             $this->setGlobalAddress($mailer, $config, $type);
         }
 
@@ -163,15 +162,14 @@ class MailManager implements FactoryContract
         // Here we will check if the "transport" key exists and if it doesn't we will
         // assume an application is still using the legacy mail configuration file
         // format and use the "mail.driver" configuration option instead for BC.
-        $transport = $config['transport'] ??
-            $this->app['config']['mail.driver'];
+        $transport = $config['transport'] ?? $this->app['config']['mail.driver'];
 
         if (isset($this->customCreators[$transport])) {
             return call_user_func($this->customCreators[$transport], $config);
         }
 
-        if (! method_exists($this, $method = 'create'.ucfirst($transport).'Transport')) {
-            throw new InvalidArgumentException("Unsupported mail transport [{$config['transport']}].");
+        if (trim($transport) === '' || ! method_exists($this, $method = 'create'.ucfirst($transport).'Transport')) {
+            throw new InvalidArgumentException("Unsupported mail transport [{$transport}].");
         }
 
         return $this->{$method}($config);
@@ -228,6 +226,14 @@ class MailManager implements FactoryContract
 
         if (isset($config['local_domain'])) {
             $transport->setLocalDomain($config['local_domain']);
+        }
+
+        if (isset($config['timeout'])) {
+            $transport->setTimeout($config['timeout']);
+        }
+
+        if (isset($config['auth_mode'])) {
+            $transport->setAuthMode($config['auth_mode']);
         }
 
         return $transport;
@@ -321,8 +327,13 @@ class MailManager implements FactoryContract
      */
     protected function createPostmarkTransport(array $config)
     {
+        $headers = isset($config['message_stream_id']) ? [
+            'X-PM-Message-Stream' => $config['message_stream_id'],
+        ] : [];
+
         return tap(new PostmarkTransport(
-            $config['token'] ?? $this->app['config']->get('services.postmark.token')
+            $config['token'] ?? $this->app['config']->get('services.postmark.token'),
+            $headers
         ), function ($transport) {
             $transport->registerPlugin(new ThrowExceptionOnFailurePlugin());
         });
@@ -432,6 +443,19 @@ class MailManager implements FactoryContract
         }
 
         $this->app['config']['mail.default'] = $name;
+    }
+
+    /**
+     * Disconnect the given mailer and remove from local cache.
+     *
+     * @param  string|null  $name
+     * @return void
+     */
+    public function purge($name = null)
+    {
+        $name = $name ?: $this->getDefaultDriver();
+
+        unset($this->mailers[$name]);
     }
 
     /**

@@ -11,9 +11,7 @@ use PHPUnit\Framework\TestCase;
 class RedisManagerExtensionTest extends TestCase
 {
     /**
-     * Redis manager instance.
-     *
-     * @var RedisManager
+     * @var \Illuminate\Redis\RedisManager
      */
     protected $redis;
 
@@ -41,7 +39,7 @@ class RedisManagerExtensionTest extends TestCase
         ]);
 
         $this->redis->extend('my_custom_driver', function () {
-            return new FakeRedisConnnector();
+            return new FakeRedisConnector();
         });
     }
 
@@ -93,13 +91,13 @@ class RedisManagerExtensionTest extends TestCase
     }
 }
 
-class FakeRedisConnnector implements Connector
+class FakeRedisConnector implements Connector
 {
     /**
      * Create a new clustered Predis connection.
      *
-     * @param array $config
-     * @param array $options
+     * @param  array  $config
+     * @param  array  $options
      * @return \Illuminate\Contracts\Redis\Connection
      */
     public function connect(array $config, array $options)
@@ -110,9 +108,9 @@ class FakeRedisConnnector implements Connector
     /**
      * Create a new clustered Predis connection.
      *
-     * @param array $config
-     * @param array $clusterOptions
-     * @param array $options
+     * @param  array  $config
+     * @param  array  $clusterOptions
+     * @param  array  $options
      * @return \Illuminate\Contracts\Redis\Connection
      */
     public function connectToCluster(array $config, array $clusterOptions, array $options)

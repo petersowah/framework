@@ -6,6 +6,7 @@ use Illuminate\Cache\MemcachedConnector;
 use Memcached;
 use Mockery as m;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 
 class CacheMemcachedConnectorTest extends TestCase
 {
@@ -102,7 +103,7 @@ class CacheMemcachedConnectorTest extends TestCase
 
     protected function connectorMock()
     {
-        return $this->getMockBuilder(MemcachedConnector::class)->setMethods(['createMemcachedInstance'])->getMock();
+        return $this->getMockBuilder(MemcachedConnector::class)->onlyMethods(['createMemcachedInstance'])->getMock();
     }
 
     protected function connect(

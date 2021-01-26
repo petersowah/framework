@@ -3,17 +3,18 @@
 namespace Illuminate\Tests\Container;
 
 use Closure;
+use Error;
 use Illuminate\Container\Container;
+use Illuminate\Contracts\Container\BindingResolutionException;
 use PHPUnit\Framework\TestCase;
-use ReflectionException;
 use stdClass;
 
 class ContainerCallTest extends TestCase
 {
     public function testCallWithAtSignBasedClassReferencesWithoutMethodThrowsException()
     {
-        $this->expectException(ReflectionException::class);
-        $this->expectExceptionMessage('Function ContainerTestCallStub() does not exist');
+        $this->expectException(Error::class);
+        $this->expectExceptionMessage('Call to undefined function ContainerTestCallStub()');
 
         $container = new Container;
         $container->call('ContainerTestCallStub');
@@ -167,6 +168,44 @@ class ContainerCallTest extends TestCase
         $this->assertInstanceOf(ContainerCallConcreteStub::class, $result[0]);
         $this->assertSame('jeffrey', $result[1]);
     }
+
+    public function testCallWithCallableClassString()
+    {
+        $container = new Container;
+        $result = $container->call(ContainerCallCallableClassStringStub::class);
+        $this->assertInstanceOf(ContainerCallConcreteStub::class, $result[0]);
+        $this->assertSame('jeffrey', $result[1]);
+        $this->assertInstanceOf(ContainerTestCallStub::class, $result[2]);
+    }
+
+    public function testCallWithoutRequiredParamsThrowsException()
+    {
+        $this->expectException(BindingResolutionException::class);
+        $this->expectExceptionMessage('Unable to resolve dependency [Parameter #0 [ <required> $foo ]] in class Illuminate\Tests\Container\ContainerTestCallStub');
+
+        $container = new Container;
+        $container->call(ContainerTestCallStub::class.'@unresolvable');
+    }
+
+    public function testCallWithUnnamedParametersThrowsException()
+    {
+        $this->expectException(BindingResolutionException::class);
+        $this->expectExceptionMessage('Unable to resolve dependency [Parameter #0 [ <required> $foo ]] in class Illuminate\Tests\Container\ContainerTestCallStub');
+
+        $container = new Container;
+        $container->call([new ContainerTestCallStub, 'unresolvable'], ['foo', 'bar']);
+    }
+
+    public function testCallWithoutRequiredParamsOnClosureThrowsException()
+    {
+        $this->expectException(BindingResolutionException::class);
+        $this->expectExceptionMessage('Unable to resolve dependency [Parameter #0 [ <required> $foo ]] in class Illuminate\Tests\Container\ContainerCallTest');
+
+        $container = new Container;
+        $container->call(function ($foo, $bar = 'default') {
+            return $foo;
+        });
+    }
 }
 
 class ContainerTestCallStub
@@ -210,5 +249,23 @@ class ContainerCallCallableStub
     public function __invoke(ContainerCallConcreteStub $stub, $default = 'jeffrey')
     {
         return func_get_args();
+    }
+}
+
+class ContainerCallCallableClassStringStub
+{
+    public $stub;
+
+    public $default;
+
+    public function __construct(ContainerCallConcreteStub $stub, $default = 'jeffrey')
+    {
+        $this->stub = $stub;
+        $this->default = $default;
+    }
+
+    public function __invoke(ContainerTestCallStub $dependency)
+    {
+        return [$this->stub, $this->default, $dependency];
     }
 }

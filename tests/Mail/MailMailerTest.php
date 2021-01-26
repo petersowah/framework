@@ -26,7 +26,7 @@ class MailMailerTest extends TestCase
     public function testMailerSendSendsMessageWithProperViewContent()
     {
         unset($_SERVER['__mailer.test']);
-        $mailer = $this->getMockBuilder(Mailer::class)->setMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
+        $mailer = $this->getMockBuilder(Mailer::class)->onlyMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
         $message = m::mock(Swift_Mime_SimpleMessage::class);
         $mailer->expects($this->once())->method('createMessage')->willReturn($message);
         $view = m::mock(stdClass::class);
@@ -46,7 +46,7 @@ class MailMailerTest extends TestCase
     public function testMailerSendSendsMessageWithProperViewContentUsingHtmlStrings()
     {
         unset($_SERVER['__mailer.test']);
-        $mailer = $this->getMockBuilder(Mailer::class)->setMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
+        $mailer = $this->getMockBuilder(Mailer::class)->onlyMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
         $message = m::mock(Swift_Mime_SimpleMessage::class);
         $mailer->expects($this->once())->method('createMessage')->willReturn($message);
         $view = m::mock(stdClass::class);
@@ -67,7 +67,7 @@ class MailMailerTest extends TestCase
     public function testMailerSendSendsMessageWithProperViewContentUsingHtmlMethod()
     {
         unset($_SERVER['__mailer.test']);
-        $mailer = $this->getMockBuilder(Mailer::class)->setMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
+        $mailer = $this->getMockBuilder(Mailer::class)->onlyMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
         $message = m::mock(Swift_Mime_SimpleMessage::class);
         $mailer->expects($this->once())->method('createMessage')->willReturn($message);
         $view = m::mock(stdClass::class);
@@ -87,7 +87,7 @@ class MailMailerTest extends TestCase
     public function testMailerSendSendsMessageWithProperPlainViewContent()
     {
         unset($_SERVER['__mailer.test']);
-        $mailer = $this->getMockBuilder(Mailer::class)->setMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
+        $mailer = $this->getMockBuilder(Mailer::class)->onlyMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
         $message = m::mock(Swift_Mime_SimpleMessage::class);
         $mailer->expects($this->once())->method('createMessage')->willReturn($message);
         $view = m::mock(stdClass::class);
@@ -109,7 +109,7 @@ class MailMailerTest extends TestCase
     public function testMailerSendSendsMessageWithProperPlainViewContentWhenExplicit()
     {
         unset($_SERVER['__mailer.test']);
-        $mailer = $this->getMockBuilder(Mailer::class)->setMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
+        $mailer = $this->getMockBuilder(Mailer::class)->onlyMethods(['createMessage'])->setConstructorArgs($this->getMocks())->getMock();
         $message = m::mock(Swift_Mime_SimpleMessage::class);
         $mailer->expects($this->once())->method('createMessage')->willReturn($message);
         $view = m::mock(stdClass::class);
@@ -139,6 +139,23 @@ class MailMailerTest extends TestCase
         $mailer->alwaysFrom('taylorotwell@gmail.com', 'Taylor Otwell');
         $mailer->getSwiftMailer()->shouldReceive('send')->once()->with(m::type(Swift_Message::class), [])->andReturnUsing(function ($message) {
             $this->assertEquals(['taylorotwell@gmail.com' => 'Taylor Otwell'], $message->getFrom());
+        });
+        $mailer->send('foo', ['data'], function ($m) {
+            //
+        });
+    }
+
+    public function testGlobalReturnPathIsRespectedOnAllMessages()
+    {
+        unset($_SERVER['__mailer.test']);
+        $mailer = $this->getMailer();
+        $view = m::mock(stdClass::class);
+        $mailer->getViewFactory()->shouldReceive('make')->once()->andReturn($view);
+        $view->shouldReceive('render')->once()->andReturn('rendered.view');
+        $this->setSwiftMailer($mailer);
+        $mailer->alwaysReturnPath('taylorotwell@gmail.com');
+        $mailer->getSwiftMailer()->shouldReceive('send')->once()->with(m::type(Swift_Message::class), [])->andReturnUsing(function ($message) {
+            $this->assertSame('taylorotwell@gmail.com', $message->getReturnPath());
         });
         $mailer->send('foo', ['data'], function ($m) {
             //

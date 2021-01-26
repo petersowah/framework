@@ -6,6 +6,7 @@ use ArrayAccess;
 use Illuminate\Contracts\Support\Htmlable;
 use Illuminate\Support\Env;
 use Illuminate\Support\Optional;
+use LogicException;
 use Mockery as m;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -363,9 +364,62 @@ class SupportHelpersTest extends TestCase
 
     public function testThrow()
     {
+        $this->expectException(LogicException::class);
+
+        throw_if(true, new LogicException);
+    }
+
+    public function testThrowDefaultException()
+    {
         $this->expectException(RuntimeException::class);
 
-        throw_if(true, new RuntimeException);
+        throw_if(true);
+    }
+
+    public function testThrowExceptionWithMessage()
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('test');
+
+        throw_if(true, 'test');
+    }
+
+    public function testThrowExceptionAsStringWithMessage()
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('test');
+
+        throw_if(true, LogicException::class, 'test');
+    }
+
+    public function testThrowUnless()
+    {
+        $this->expectException(LogicException::class);
+
+        throw_unless(false, new LogicException);
+    }
+
+    public function testThrowUnlessDefaultException()
+    {
+        $this->expectException(RuntimeException::class);
+
+        throw_unless(false);
+    }
+
+    public function testThrowUnlessExceptionWithMessage()
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('test');
+
+        throw_unless(false, 'test');
+    }
+
+    public function testThrowUnlessExceptionAsStringWithMessage()
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('test');
+
+        throw_unless(false, LogicException::class, 'test');
     }
 
     public function testThrowReturnIfNotThrown()
@@ -492,7 +546,7 @@ class SupportHelpersTest extends TestCase
         $this->assertEquals(2, $attempts);
 
         // Make sure we waited 100ms for the first attempt
-        $this->assertTrue(microtime(true) - $startTime >= 0.1);
+        $this->assertEqualsWithDelta(0.1, microtime(true) - $startTime, 0.02);
     }
 
     public function testRetryWithPassingWhenCallback()
@@ -513,7 +567,7 @@ class SupportHelpersTest extends TestCase
         $this->assertEquals(2, $attempts);
 
         // Make sure we waited 100ms for the first attempt
-        $this->assertTrue(microtime(true) - $startTime >= 0.1);
+        $this->assertEqualsWithDelta(0.1, microtime(true) - $startTime, 0.02);
     }
 
     public function testRetryWithFailingWhenCallback()
@@ -637,11 +691,39 @@ class SupportHelpersTest extends TestCase
         $this->assertSame('x"null"x', env('foo'));
     }
 
-    public function testGetFromENVFirst()
+    public function testGetFromSERVERFirst()
     {
         $_ENV['foo'] = 'From $_ENV';
         $_SERVER['foo'] = 'From $_SERVER';
-        $this->assertSame('From $_ENV', env('foo'));
+        $this->assertSame('From $_SERVER', env('foo'));
+    }
+
+    public function providesPregReplaceArrayData()
+    {
+        $pointerArray = ['Taylor', 'Otwell'];
+
+        next($pointerArray);
+
+        return [
+            ['/:[a-z_]+/', ['8:30', '9:00'], 'The event will take place between :start and :end', 'The event will take place between 8:30 and 9:00'],
+            ['/%s/', ['Taylor'], 'Hi, %s', 'Hi, Taylor'],
+            ['/%s/', ['Taylor', 'Otwell'], 'Hi, %s %s', 'Hi, Taylor Otwell'],
+            ['/%s/', [], 'Hi, %s %s', 'Hi,  '],
+            ['/%s/', ['a', 'b', 'c'], 'Hi', 'Hi'],
+            ['//', [], '', ''],
+            ['/%s/', ['a'], '', ''],
+            // The internal pointer of this array is not at the beginning
+            ['/%s/', $pointerArray, 'Hi, %s %s', 'Hi, Taylor Otwell'],
+        ];
+    }
+
+    /** @dataProvider providesPregReplaceArrayData */
+    public function testPregReplaceArray($pattern, $replacements, $subject, $expectedOutput)
+    {
+        $this->assertSame(
+            $expectedOutput,
+            preg_replace_array($pattern, $replacements, $subject)
+        );
     }
 }
 

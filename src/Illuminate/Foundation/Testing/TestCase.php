@@ -7,6 +7,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Application as Artisan;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Facades\ParallelTesting;
 use Illuminate\Support\Str;
 use Mockery;
 use Mockery\Exception\InvalidCountException;
@@ -22,6 +23,8 @@ abstract class TestCase extends BaseTestCase
         Concerns\InteractsWithDatabase,
         Concerns\InteractsWithExceptionHandling,
         Concerns\InteractsWithSession,
+        Concerns\InteractsWithTime,
+        Concerns\InteractsWithViews,
         Concerns\MocksApplicationServices;
 
     /**
@@ -75,8 +78,12 @@ abstract class TestCase extends BaseTestCase
      */
     protected function setUp(): void
     {
+        Facade::clearResolvedInstances();
+
         if (! $this->app) {
             $this->refreshApplication();
+
+            ParallelTesting::callSetUpTestCaseCallbacks($this);
         }
 
         $this->setUpTraits();
@@ -84,8 +91,6 @@ abstract class TestCase extends BaseTestCase
         foreach ($this->afterApplicationCreatedCallbacks as $callback) {
             $callback();
         }
-
-        Facade::clearResolvedInstances();
 
         Model::setEventDispatcher($this->app['events']);
 
@@ -142,11 +147,15 @@ abstract class TestCase extends BaseTestCase
      * Clean up the testing environment before the next test.
      *
      * @return void
+     *
+     * @throws \Mockery\Exception\InvalidCountException
      */
     protected function tearDown(): void
     {
         if ($this->app) {
             $this->callBeforeApplicationDestroyedCallbacks();
+
+            ParallelTesting::callTearDownTestCaseCallbacks($this);
 
             $this->app->flush();
 

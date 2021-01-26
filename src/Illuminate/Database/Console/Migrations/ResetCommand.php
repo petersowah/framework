@@ -47,12 +47,12 @@ class ResetCommand extends BaseCommand
     /**
      * Execute the console command.
      *
-     * @return void
+     * @return int
      */
     public function handle()
     {
         if (! $this->confirmToProceed()) {
-            return;
+            return 1;
         }
 
         return $this->migrator->usingConnection($this->option('database'), function () {

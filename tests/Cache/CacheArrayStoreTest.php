@@ -49,7 +49,7 @@ class CacheArrayStoreTest extends TestCase
 
     public function testStoreItemForeverProperlyStoresInArray()
     {
-        $mock = $this->getMockBuilder(ArrayStore::class)->setMethods(['put'])->getMock();
+        $mock = $this->getMockBuilder(ArrayStore::class)->onlyMethods(['put'])->getMock();
         $mock->expects($this->once())
             ->method('put')->with($this->equalTo('foo'), $this->equalTo('bar'), $this->equalTo(0))
             ->willReturn(true);
@@ -193,5 +193,40 @@ class CacheArrayStoreTest extends TestCase
         $wannabeOwner->forceRelease();
 
         $this->assertTrue($wannabeOwner->acquire());
+    }
+
+    public function testValuesAreNotStoredByReference()
+    {
+        $store = new ArrayStore($serialize = true);
+        $object = new \stdClass;
+        $object->foo = true;
+
+        $store->put('object', $object, 10);
+        $object->bar = true;
+
+        $this->assertObjectNotHasAttribute('bar', $store->get('object'));
+    }
+
+    public function testValuesAreStoredByReferenceIfSerializationIsDisabled()
+    {
+        $store = new ArrayStore;
+        $object = new \stdClass;
+        $object->foo = true;
+
+        $store->put('object', $object, 10);
+        $object->bar = true;
+
+        $this->assertObjectHasAttribute('bar', $store->get('object'));
+    }
+
+    public function testReleasingLockAfterAlreadyForceReleasedByAnotherOwnerFails()
+    {
+        $store = new ArrayStore;
+        $owner = $store->lock('foo', 10);
+        $wannabeOwner = $store->lock('foo', 10);
+        $owner->acquire();
+        $wannabeOwner->forceRelease();
+
+        $this->assertFalse($wannabeOwner->release());
     }
 }

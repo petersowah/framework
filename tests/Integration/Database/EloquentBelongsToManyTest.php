@@ -52,7 +52,7 @@ class EloquentBelongsToManyTest extends DatabaseTestCase
         Schema::create('posts_tags', function (Blueprint $table) {
             $table->integer('post_id');
             $table->integer('tag_id');
-            $table->string('flag')->default('');
+            $table->string('flag')->default('')->nullable();
             $table->timestamps();
         });
 
@@ -229,8 +229,8 @@ class EloquentBelongsToManyTest extends DatabaseTestCase
         );
         foreach ($post->tagsWithCustomExtraPivot as $tag) {
             $this->assertSame('exclude', $tag->pivot->flag);
-            $this->assertEquals('1507630210', $tag->pivot->getAttributes()['created_at']);
-            $this->assertEquals('1507630220', $tag->pivot->getAttributes()['updated_at']); // +10 seconds
+            $this->assertSame('1507630210', $tag->pivot->getAttributes()['created_at']);
+            $this->assertSame('1507630220', $tag->pivot->getAttributes()['updated_at']); // +10 seconds
         }
     }
 
@@ -661,6 +661,22 @@ class EloquentBelongsToManyTest extends DatabaseTestCase
         $this->assertEquals($relationTag->getAttributes(), $tag->getAttributes());
     }
 
+    public function testFirstWhere()
+    {
+        $tag = Tag::create(['name' => 'foo']);
+        $post = Post::create(['title' => Str::random()]);
+
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag->id, 'flag' => 'foo'],
+        ]);
+
+        $relationTag = $post->tags()->firstWhere('name', 'foo');
+        $this->assertEquals($relationTag->getAttributes(), $tag->getAttributes());
+
+        $relationTag = $post->tags()->firstWhere('name', '=', 'foo');
+        $this->assertEquals($relationTag->getAttributes(), $tag->getAttributes());
+    }
+
     public function testWherePivotOnBoolean()
     {
         $tag = Tag::create(['name' => Str::random()]);
@@ -747,6 +763,40 @@ class EloquentBelongsToManyTest extends DatabaseTestCase
 
         $relationTags = $post->tags()->wherePivotIn('flag', ['foo'])->orWherePivotNotIn('flag', ['baz'])->get();
         $this->assertEquals($relationTags->pluck('id')->toArray(), [$tag1->id, $tag2->id]);
+    }
+
+    public function testWherePivotNullMethod()
+    {
+        $tag1 = Tag::create(['name' => Str::random()]);
+        $tag2 = Tag::create(['name' => Str::random()]);
+        $post = Post::create(['title' => Str::random()]);
+
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag1->id, 'flag' => 'foo'],
+        ]);
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag2->id, 'flag' => null],
+        ]);
+
+        $relationTag = $post->tagsWithExtraPivot()->wherePivotNull('flag')->first();
+        $this->assertEquals($relationTag->getAttributes(), $tag2->getAttributes());
+    }
+
+    public function testWherePivotNotNullMethod()
+    {
+        $tag1 = Tag::create(['name' => Str::random()]);
+        $tag2 = Tag::create(['name' => Str::random()]);
+        $post = Post::create(['title' => Str::random()]);
+
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag1->id, 'flag' => 'foo'],
+        ]);
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag2->id, 'flag' => null],
+        ]);
+
+        $relationTag = $post->tagsWithExtraPivot()->wherePivotNotNull('flag')->first();
+        $this->assertEquals($relationTag->getAttributes(), $tag1->getAttributes());
     }
 
     public function testCanUpdateExistingPivot()
@@ -855,13 +905,35 @@ class EloquentBelongsToManyTest extends DatabaseTestCase
         $user->postsWithCustomPivot()->updateExistingPivot($post2->uuid, ['is_draft' => 0]);
         $this->assertEquals(0, $user->postsWithCustomPivot()->first()->pivot->is_draft);
     }
+
+    public function testOrderByPivotMethod()
+    {
+        $tag1 = Tag::create(['name' => Str::random()]);
+        $tag2 = Tag::create(['name' => Str::random()]);
+        $tag3 = Tag::create(['name' => Str::random()]);
+        $tag4 = Tag::create(['name' => Str::random()]);
+        $post = Post::create(['title' => Str::random()]);
+
+        DB::table('posts_tags')->insert([
+            ['post_id' => $post->id, 'tag_id' => $tag1->id, 'flag' => 'foo3'],
+            ['post_id' => $post->id, 'tag_id' => $tag2->id, 'flag' => 'foo1'],
+            ['post_id' => $post->id, 'tag_id' => $tag3->id, 'flag' => 'foo4'],
+            ['post_id' => $post->id, 'tag_id' => $tag4->id, 'flag' => 'foo2'],
+        ]);
+
+        $relationTag1 = $post->tagsWithCustomExtraPivot()->orderByPivot('flag', 'asc')->first();
+        $this->assertEquals($relationTag1->getAttributes(), $tag2->getAttributes());
+
+        $relationTag2 = $post->tagsWithCustomExtraPivot()->orderByPivot('flag', 'desc')->first();
+        $this->assertEquals($relationTag2->getAttributes(), $tag3->getAttributes());
+    }
 }
 
 class User extends Model
 {
     public $table = 'users';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $guarded = [];
 
     protected static function boot()
     {
@@ -884,7 +956,7 @@ class Post extends Model
 {
     public $table = 'posts';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $guarded = [];
     protected $touches = ['touchingTags'];
 
     protected static function boot()
@@ -958,7 +1030,7 @@ class Tag extends Model
 {
     public $table = 'tags';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $fillable = ['name'];
 
     public function posts()
     {
@@ -970,7 +1042,7 @@ class TouchingTag extends Model
 {
     public $table = 'tags';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $guarded = [];
     protected $touches = ['posts'];
 
     public function posts()
@@ -983,7 +1055,7 @@ class TagWithCustomPivot extends Model
 {
     public $table = 'tags';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $guarded = [];
 
     public function posts()
     {
@@ -1006,7 +1078,7 @@ class TagWithGlobalScope extends Model
 {
     public $table = 'tags';
     public $timestamps = true;
-    protected $guarded = ['id'];
+    protected $guarded = [];
 
     public static function boot()
     {

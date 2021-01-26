@@ -4,6 +4,7 @@ namespace Illuminate\Tests\Database;
 
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as DB;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 
@@ -40,12 +41,12 @@ class DatabaseSchemaBuilderIntegrationTest extends TestCase
 
     public function testDropAllTablesWorksWithForeignKeys()
     {
-        $this->db->connection()->getSchemaBuilder()->create('table1', function ($table) {
+        $this->db->connection()->getSchemaBuilder()->create('table1', function (Blueprint $table) {
             $table->integer('id');
             $table->string('name');
         });
 
-        $this->db->connection()->getSchemaBuilder()->create('table2', function ($table) {
+        $this->db->connection()->getSchemaBuilder()->create('table2', function (Blueprint $table) {
             $table->integer('id');
             $table->string('user_id');
             $table->foreign('user_id')->references('id')->on('table1');
@@ -64,7 +65,7 @@ class DatabaseSchemaBuilderIntegrationTest extends TestCase
     {
         $this->db->connection()->setTablePrefix('test_');
 
-        $this->db->connection()->getSchemaBuilder()->create('table1', function ($table) {
+        $this->db->connection()->getSchemaBuilder()->create('table1', function (Blueprint $table) {
             $table->integer('id');
             $table->string('name');
         });
@@ -81,7 +82,7 @@ class DatabaseSchemaBuilderIntegrationTest extends TestCase
             'prefix_indexes' => false,
         ]);
 
-        $this->db->connection()->getSchemaBuilder()->create('table1', function ($table) {
+        $this->db->connection()->getSchemaBuilder()->create('table1', function (Blueprint $table) {
             $table->integer('id');
             $table->string('name')->index();
         });
@@ -98,11 +99,39 @@ class DatabaseSchemaBuilderIntegrationTest extends TestCase
             'prefix_indexes' => true,
         ]);
 
-        $this->db->connection()->getSchemaBuilder()->create('table1', function ($table) {
+        $this->db->connection()->getSchemaBuilder()->create('table1', function (Blueprint $table) {
             $table->integer('id');
             $table->string('name')->index();
         });
 
         $this->assertArrayHasKey('example_table1_name_index', $this->db->connection()->getDoctrineSchemaManager()->listTableIndexes('example_table1'));
+    }
+
+    public function testDropColumnWithTablePrefix()
+    {
+        $this->db->connection()->setTablePrefix('test_');
+
+        $this->schemaBuilder()->create('pandemic_table', function (Blueprint $table) {
+            $table->integer('id');
+            $table->string('stay_home');
+            $table->string('covid19');
+            $table->string('wear_mask');
+        });
+
+        // drop single columns
+        $this->assertTrue($this->schemaBuilder()->hasColumn('pandemic_table', 'stay_home'));
+        $this->schemaBuilder()->dropColumns('pandemic_table', 'stay_home');
+        $this->assertFalse($this->schemaBuilder()->hasColumn('pandemic_table', 'stay_home'));
+
+        // drop multiple columns
+        $this->assertTrue($this->schemaBuilder()->hasColumn('pandemic_table', 'covid19'));
+        $this->schemaBuilder()->dropColumns('pandemic_table', ['covid19', 'wear_mask']);
+        $this->assertFalse($this->schemaBuilder()->hasColumn('pandemic_table', 'wear_mask'));
+        $this->assertFalse($this->schemaBuilder()->hasColumn('pandemic_table', 'covid19'));
+    }
+
+    private function schemaBuilder()
+    {
+        return $this->db->connection()->getSchemaBuilder();
     }
 }

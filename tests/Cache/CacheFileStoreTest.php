@@ -6,6 +6,7 @@ use Illuminate\Cache\FileStore;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Carbon;
+use Mockery as m;
 use PHPUnit\Framework\TestCase;
 
 class CacheFileStoreTest extends TestCase
@@ -51,7 +52,7 @@ class CacheFileStoreTest extends TestCase
         $files = $this->mockFilesystem();
         $contents = '0000000000';
         $files->expects($this->once())->method('get')->willReturn($contents);
-        $store = $this->getMockBuilder(FileStore::class)->setMethods(['forget'])->setConstructorArgs([$files, __DIR__])->getMock();
+        $store = $this->getMockBuilder(FileStore::class)->onlyMethods(['forget'])->setConstructorArgs([$files, __DIR__])->getMock();
         $store->expects($this->once())->method('forget');
         $value = $store->get('foo');
         $this->assertNull($value);
@@ -69,7 +70,7 @@ class CacheFileStoreTest extends TestCase
     public function testStoreItemProperlyStoresValues()
     {
         $files = $this->mockFilesystem();
-        $store = $this->getMockBuilder(FileStore::class)->setMethods(['expiration'])->setConstructorArgs([$files, __DIR__])->getMock();
+        $store = $this->getMockBuilder(FileStore::class)->onlyMethods(['expiration'])->setConstructorArgs([$files, __DIR__])->getMock();
         $store->expects($this->once())->method('expiration')->with($this->equalTo(10))->willReturn(1111111111);
         $contents = '1111111111'.serialize('Hello World');
         $hash = sha1('foo');
@@ -77,6 +78,27 @@ class CacheFileStoreTest extends TestCase
         $files->expects($this->once())->method('put')->with($this->equalTo(__DIR__.'/'.$cache_dir.'/'.$hash), $this->equalTo($contents))->willReturn(strlen($contents));
         $result = $store->put('foo', 'Hello World', 10);
         $this->assertTrue($result);
+    }
+
+    public function testStoreItemProperlySetsPermissions()
+    {
+        $files = m::mock(Filesystem::class);
+        $files->shouldIgnoreMissing();
+        $store = $this->getMockBuilder(FileStore::class)->onlyMethods(['expiration'])->setConstructorArgs([$files, __DIR__, 0644])->getMock();
+        $hash = sha1('foo');
+        $cache_dir = substr($hash, 0, 2).'/'.substr($hash, 2, 2);
+        $files->shouldReceive('put')->withArgs([__DIR__.'/'.$cache_dir.'/'.$hash, m::any(), m::any()])->andReturnUsing(function ($name, $value) {
+            return strlen($value);
+        });
+        $files->shouldReceive('chmod')->withArgs([__DIR__.'/'.$cache_dir.'/'.$hash])->andReturnValues(['0600', '0644'])->times(3);
+        $files->shouldReceive('chmod')->withArgs([__DIR__.'/'.$cache_dir.'/'.$hash, 0644])->andReturn([true])->once();
+        $result = $store->put('foo', 'foo', 10);
+        $this->assertTrue($result);
+        $result = $store->put('foo', 'bar', 10);
+        $this->assertTrue($result);
+        $result = $store->put('foo', 'baz', 10);
+        $this->assertTrue($result);
+        m::close();
     }
 
     public function testForeversAreStoredWithHighTimestamp()

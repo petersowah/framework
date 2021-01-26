@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Mockery as m;
 use PHPUnit\Framework\TestCase;
+use stdClass;
 
 class DatabaseEloquentBelongsToManyWithDefaultAttributesTest extends TestCase
 {
@@ -17,13 +18,13 @@ class DatabaseEloquentBelongsToManyWithDefaultAttributesTest extends TestCase
 
     public function testWithPivotValueMethodSetsWhereConditionsForFetching()
     {
-        $relation = $this->getMockBuilder(BelongsToMany::class)->setMethods(['touchIfTouching'])->setConstructorArgs($this->getRelationArguments())->getMock();
+        $relation = $this->getMockBuilder(BelongsToMany::class)->onlyMethods(['touchIfTouching'])->setConstructorArgs($this->getRelationArguments())->getMock();
         $relation->withPivotValue(['is_admin' => 1]);
     }
 
     public function testWithPivotValueMethodSetsDefaultArgumentsForInsertion()
     {
-        $relation = $this->getMockBuilder(BelongsToMany::class)->setMethods(['touchIfTouching'])->setConstructorArgs($this->getRelationArguments())->getMock();
+        $relation = $this->getMockBuilder(BelongsToMany::class)->onlyMethods(['touchIfTouching'])->setConstructorArgs($this->getRelationArguments())->getMock();
         $relation->withPivotValue(['is_admin' => 1]);
 
         $query = m::mock(stdClass::class);
@@ -49,6 +50,7 @@ class DatabaseEloquentBelongsToManyWithDefaultAttributesTest extends TestCase
 
         $related->shouldReceive('getTable')->andReturn('users');
         $related->shouldReceive('getKeyName')->andReturn('id');
+        $related->shouldReceive('qualifyColumn')->with('id')->andReturn('users.id');
 
         $builder->shouldReceive('join')->once()->with('club_user', 'users.id', '=', 'club_user.user_id');
         $builder->shouldReceive('where')->once()->with('club_user.club_id', '=', 1);

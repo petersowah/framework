@@ -30,10 +30,9 @@ class MailSesTransportTest extends TestCase
 
         $manager = new MailManager($container);
 
-        /** @var SesTransport $transport */
+        /** @var \Illuminate\Mail\Transport\SesTransport $transport */
         $transport = $manager->createTransport(['transport' => 'ses']);
 
-        /** @var SesClient $ses */
         $ses = $transport->ses();
 
         $this->assertSame('us-east-1', $ses->getRegion());
@@ -47,13 +46,13 @@ class MailSesTransportTest extends TestCase
         $message->setBcc('you@example.com');
 
         $client = $this->getMockBuilder(SesClient::class)
-            ->setMethods(['sendRawEmail'])
+            ->addMethods(['sendRawEmail'])
             ->disableOriginalConstructor()
             ->getMock();
         $transport = new SesTransport($client);
 
         // Generate a messageId for our mock to return to ensure that the post-sent message
-        // has X-SES-Message-ID in its headers
+        // has X-Message-ID in its headers
         $messageId = Str::random(32);
         $sendRawEmailMock = new sendRawEmailMock($messageId);
         $client->expects($this->once())
@@ -65,6 +64,8 @@ class MailSesTransportTest extends TestCase
             ->willReturn($sendRawEmailMock);
 
         $transport->send($message);
+
+        $this->assertEquals($messageId, $message->getHeaders()->get('X-Message-ID')->getFieldBody());
         $this->assertEquals($messageId, $message->getHeaders()->get('X-SES-Message-ID')->getFieldBody());
     }
 }
@@ -78,11 +79,6 @@ class sendRawEmailMock
         $this->getResponse = $responseValue;
     }
 
-    /**
-     * Mock the get() call for the sendRawEmail response.
-     * @param  [type] $key [description]
-     * @return [type]      [description]
-     */
     public function get($key)
     {
         return $this->getResponse;

@@ -7,9 +7,11 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use Exception;
 use Foo\Bar\EloquentModelNamespacedStub;
+use Illuminate\Contracts\Database\Eloquent\CastsInboundAttributes;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
+use Illuminate\Database\ConnectionResolverInterface as Resolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\JsonEncodingException;
@@ -65,7 +67,7 @@ class DatabaseEloquentModelTest extends TestCase
         $model->list_items = ['name' => 'taylor'];
         $this->assertEquals(['name' => 'taylor'], $model->list_items);
         $attributes = $model->getAttributes();
-        $this->assertEquals(json_encode(['name' => 'taylor']), $attributes['list_items']);
+        $this->assertSame(json_encode(['name' => 'taylor']), $attributes['list_items']);
     }
 
     public function testSetAttributeWithNumericKey()
@@ -91,9 +93,30 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertTrue($model->isDirty(['foo', 'bar']));
     }
 
+    public function testIntAndNullComparisonWhenDirty()
+    {
+        $model = new EloquentModelCastingStub();
+        $model->intAttribute = null;
+        $model->syncOriginal();
+        $this->assertFalse($model->isDirty('intAttribute'));
+        $model->forceFill(['intAttribute' => 0]);
+        $this->assertTrue($model->isDirty('intAttribute'));
+    }
+
+    public function testFloatAndNullComparisonWhenDirty()
+    {
+        $model = new EloquentModelCastingStub();
+        $model->floatAttribute = null;
+        $model->syncOriginal();
+        $this->assertFalse($model->isDirty('floatAttribute'));
+        $model->forceFill(['floatAttribute' => 0.0]);
+        $this->assertTrue($model->isDirty('floatAttribute'));
+    }
+
     public function testDirtyOnCastOrDateAttributes()
     {
         $model = new EloquentModelCastingStub;
+        $model->setDateFormat('Y-m-d H:i:s');
         $model->boolAttribute = 1;
         $model->foo = 1;
         $model->bar = '2017-03-18';
@@ -147,6 +170,21 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertFalse($model->isClean(['foo', 'bar']));
     }
 
+    public function testCleanWhenFloatUpdateAttribute()
+    {
+        // test is equivalent
+        $model = new EloquentModelStub(['castedFloat' => 8 - 6.4]);
+        $model->syncOriginal();
+        $model->castedFloat = 1.6;
+        $this->assertTrue($model->originalIsEquivalent('castedFloat'));
+
+        // test is not equivalent
+        $model = new EloquentModelStub(['castedFloat' => 5.6]);
+        $model->syncOriginal();
+        $model->castedFloat = 5.5;
+        $this->assertFalse($model->originalIsEquivalent('castedFloat'));
+    }
+
     public function testCalculatedAttributes()
     {
         $model = new EloquentModelStub;
@@ -169,11 +207,11 @@ class DatabaseEloquentModelTest extends TestCase
         unset($model['table']);
 
         $this->assertTrue(isset($model['attributes']));
-        $this->assertEquals($model['attributes'], 1);
+        $this->assertEquals(1, $model['attributes']);
         $this->assertTrue(isset($model['connection']));
-        $this->assertEquals($model['connection'], 2);
+        $this->assertEquals(2, $model['connection']);
         $this->assertFalse(isset($model['table']));
-        $this->assertEquals($model['table'], null);
+        $this->assertEquals(null, $model['table']);
         $this->assertFalse(isset($model['with']));
     }
 
@@ -204,6 +242,16 @@ class DatabaseEloquentModelTest extends TestCase
         $newInstance = $model->newInstance();
 
         $this->assertSame('test', $newInstance->getTable());
+    }
+
+    public function testNewInstanceReturnsNewInstanceWithMergedCasts()
+    {
+        $model = new EloquentModelStub;
+        $model->mergeCasts(['foo' => 'date']);
+        $newInstance = $model->newInstance();
+
+        $this->assertArrayHasKey('foo', $newInstance->getCasts());
+        $this->assertSame('date', $newInstance->getCasts()['foo']);
     }
 
     public function testCreateMethodSavesNewModel()
@@ -245,6 +293,17 @@ class DatabaseEloquentModelTest extends TestCase
         EloquentModelDestroyStub::destroy(new Collection([1, 2, 3]));
     }
 
+    public function testDestroyMethodCallsQueryBuilderCorrectlyWithMultipleArgs()
+    {
+        EloquentModelDestroyStub::destroy(1, 2, 3);
+    }
+
+    public function testDestroyMethodCallsQueryBuilderCorrectlyWithEmptyIds()
+    {
+        $count = EloquentModelEmptyDestroyStub::destroy([]);
+        $this->assertSame(0, $count);
+    }
+
     public function testWithMethodCallsQueryBuilderCorrectly()
     {
         $result = EloquentModelWithStub::with('foo', 'bar');
@@ -279,7 +338,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testUpdateProcess()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('where')->once()->with('id', '=', 1);
         $query->shouldReceive('update')->once()->with(['name' => 'taylor'])->andReturn(1);
@@ -302,7 +361,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testUpdateProcessDoesntOverrideTimestamps()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('where')->once()->with('id', '=', 1);
         $query->shouldReceive('update')->once()->with(['created_at' => 'foo', 'updated_at' => 'bar'])->andReturn(1);
@@ -319,9 +378,9 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertTrue($model->save());
     }
 
-    public function testSaveIsCancelledIfSavingEventReturnsFalse()
+    public function testSaveIsCanceledIfSavingEventReturnsFalse()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
         $query = m::mock(Builder::class);
         $model->expects($this->once())->method('newModelQuery')->willReturn($query);
         $model->setEventDispatcher($events = m::mock(Dispatcher::class));
@@ -331,9 +390,9 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertFalse($model->save());
     }
 
-    public function testUpdateIsCancelledIfUpdatingEventReturnsFalse()
+    public function testUpdateIsCanceledIfUpdatingEventReturnsFalse()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
         $query = m::mock(Builder::class);
         $model->expects($this->once())->method('newModelQuery')->willReturn($query);
         $model->setEventDispatcher($events = m::mock(Dispatcher::class));
@@ -347,7 +406,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testEventsCanBeFiredWithCustomEventObjects()
     {
-        $model = $this->getMockBuilder(EloquentModelEventObjectStub::class)->setMethods(['newModelQuery'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelEventObjectStub::class)->onlyMethods(['newModelQuery'])->getMock();
         $query = m::mock(Builder::class);
         $model->expects($this->once())->method('newModelQuery')->willReturn($query);
         $model->setEventDispatcher($events = m::mock(Dispatcher::class));
@@ -359,7 +418,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testUpdateProcessWithoutTimestamps()
     {
-        $model = $this->getMockBuilder(EloquentModelEventObjectStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'fireModelEvent'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelEventObjectStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'fireModelEvent'])->getMock();
         $model->timestamps = false;
         $query = m::mock(Builder::class);
         $query->shouldReceive('where')->once()->with('id', '=', 1);
@@ -377,7 +436,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testUpdateUsesOldPrimaryKey()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('where')->once()->with('id', '=', 1);
         $query->shouldReceive('update')->once()->with(['id' => 2, 'foo' => 'bar'])->andReturn(1);
@@ -400,7 +459,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testTimestampsAreReturnedAsObjects()
     {
-        $model = $this->getMockBuilder(EloquentDateModelStub::class)->setMethods(['getDateFormat'])->getMock();
+        $model = $this->getMockBuilder(EloquentDateModelStub::class)->onlyMethods(['getDateFormat'])->getMock();
         $model->expects($this->any())->method('getDateFormat')->willReturn('Y-m-d');
         $model->setRawAttributes([
             'created_at' => '2012-12-04',
@@ -413,7 +472,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testTimestampsAreReturnedAsObjectsFromPlainDatesAndTimestamps()
     {
-        $model = $this->getMockBuilder(EloquentDateModelStub::class)->setMethods(['getDateFormat'])->getMock();
+        $model = $this->getMockBuilder(EloquentDateModelStub::class)->onlyMethods(['getDateFormat'])->getMock();
         $model->expects($this->any())->method('getDateFormat')->willReturn('Y-m-d H:i:s');
         $model->setRawAttributes([
             'created_at' => '2012-12-04',
@@ -510,11 +569,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testFromDateTimeMilliseconds()
     {
-        if (version_compare(PHP_VERSION, '7.3.0-dev', '<')) {
-            $this->markTestSkipped('Due to https://bugs.php.net/bug.php?id=75577, proper "v" format support can only works since PHP 7.3.');
-        }
-
-        $model = $this->getMockBuilder('Illuminate\Tests\Database\EloquentDateModelStub')->setMethods(['getDateFormat'])->getMock();
+        $model = $this->getMockBuilder('Illuminate\Tests\Database\EloquentDateModelStub')->onlyMethods(['getDateFormat'])->getMock();
         $model->expects($this->any())->method('getDateFormat')->willReturn('Y-m-d H:s.vi');
         $model->setRawAttributes([
             'created_at' => '2012-12-04 22:59.32130',
@@ -526,7 +581,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testInsertProcess()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -545,7 +600,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertEquals(1, $model->id);
         $this->assertTrue($model->exists);
 
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insert')->once()->with(['name' => 'taylor']);
         $query->shouldReceive('getConnection')->once();
@@ -566,9 +621,9 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertTrue($model->exists);
     }
 
-    public function testInsertIsCancelledIfCreatingEventReturnsFalse()
+    public function testInsertIsCanceledIfCreatingEventReturnsFalse()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('getConnection')->once();
         $model->expects($this->once())->method('newModelQuery')->willReturn($query);
@@ -582,7 +637,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testDeleteProperlyDeletesModel()
     {
-        $model = $this->getMockBuilder(Model::class)->setMethods(['newModelQuery', 'updateTimestamps', 'touchOwners'])->getMock();
+        $model = $this->getMockBuilder(Model::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'touchOwners'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('where')->once()->with('id', '=', 1)->andReturn($query);
         $query->shouldReceive('delete')->once();
@@ -595,7 +650,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testPushNoRelations()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -612,7 +667,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testPushEmptyOneRelation()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -631,7 +686,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testPushOneRelation()
     {
-        $related1 = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $related1 = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'related1'], 'id')->andReturn(2);
         $query->shouldReceive('getConnection')->once();
@@ -640,7 +695,7 @@ class DatabaseEloquentModelTest extends TestCase
         $related1->name = 'related1';
         $related1->exists = false;
 
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -662,7 +717,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testPushEmptyManyRelation()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -681,7 +736,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testPushManyRelation()
     {
-        $related1 = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $related1 = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'related1'], 'id')->andReturn(2);
         $query->shouldReceive('getConnection')->once();
@@ -690,7 +745,7 @@ class DatabaseEloquentModelTest extends TestCase
         $related1->name = 'related1';
         $related1->exists = false;
 
-        $related2 = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $related2 = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'related2'], 'id')->andReturn(3);
         $query->shouldReceive('getConnection')->once();
@@ -699,7 +754,7 @@ class DatabaseEloquentModelTest extends TestCase
         $related2->name = 'related2';
         $related2->exists = false;
 
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with(['name' => 'taylor'], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -928,6 +983,65 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertArrayNotHasKey('age', $array);
     }
 
+    public function testMakeVisibleIf()
+    {
+        $model = new EloquentModelStub(['name' => 'foo', 'age' => 'bar', 'id' => 'baz']);
+        $model->setHidden(['age', 'id']);
+        $model->makeVisibleIf(true, 'age');
+        $array = $model->toArray();
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayHasKey('age', $array);
+        $this->assertArrayNotHasKey('id', $array);
+
+        $model->setHidden(['age', 'id']);
+        $model->makeVisibleIf(false, 'age');
+        $array = $model->toArray();
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayNotHasKey('age', $array);
+        $this->assertArrayNotHasKey('id', $array);
+
+        $model->setHidden(['age', 'id']);
+        $model->makeVisibleIf(function ($model) {
+            return ! is_null($model->name);
+        }, 'age');
+        $array = $model->toArray();
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayHasKey('age', $array);
+        $this->assertArrayNotHasKey('id', $array);
+    }
+
+    public function testMakeHiddenIf()
+    {
+        $model = new EloquentModelStub(['name' => 'foo', 'age' => 'bar', 'address' => 'foobar', 'id' => 'baz']);
+        $array = $model->toArray();
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayHasKey('age', $array);
+        $this->assertArrayHasKey('address', $array);
+        $this->assertArrayHasKey('id', $array);
+
+        $array = $model->makeHiddenIf(true, 'address')->toArray();
+        $this->assertArrayNotHasKey('address', $array);
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayHasKey('age', $array);
+        $this->assertArrayHasKey('id', $array);
+
+        $model->makeVisible('address');
+
+        $array = $model->makeHiddenIf(false, ['name', 'age'])->toArray();
+        $this->assertArrayHasKey('name', $array);
+        $this->assertArrayHasKey('age', $array);
+        $this->assertArrayHasKey('address', $array);
+        $this->assertArrayHasKey('id', $array);
+
+        $array = $model->makeHiddenIf(function ($model) {
+            return ! is_null($model->id);
+        }, ['name', 'age'])->toArray();
+        $this->assertArrayHasKey('address', $array);
+        $this->assertArrayNotHasKey('name', $array);
+        $this->assertArrayNotHasKey('age', $array);
+        $this->assertArrayHasKey('id', $array);
+    }
+
     public function testFillable()
     {
         $model = new EloquentModelStub;
@@ -990,17 +1104,27 @@ class DatabaseEloquentModelTest extends TestCase
     public function testGuarded()
     {
         $model = new EloquentModelStub;
+
+        EloquentModelStub::setConnectionResolver($resolver = m::mock(Resolver::class));
+        $resolver->shouldReceive('connection')->andReturn($connection = m::mock(stdClass::class));
+        $connection->shouldReceive('getSchemaBuilder->getColumnListing')->andReturn(['name', 'age', 'foo']);
+
         $model->guard(['name', 'age']);
         $model->fill(['name' => 'foo', 'age' => 'bar', 'foo' => 'bar']);
         $this->assertFalse(isset($model->name));
         $this->assertFalse(isset($model->age));
         $this->assertSame('bar', $model->foo);
+
+        $model = new EloquentModelStub;
+        $model->guard(['name', 'age']);
+        $model->fill(['Foo' => 'bar']);
+        $this->assertFalse(isset($model->Foo));
     }
 
     public function testFillableOverridesGuarded()
     {
         $model = new EloquentModelStub;
-        $model->guard(['name', 'age']);
+        $model->guard([]);
         $model->fillable(['age', 'foo']);
         $model->fill(['name' => 'foo', 'age' => 'bar', 'foo' => 'bar']);
         $this->assertFalse(isset($model->name));
@@ -1134,6 +1258,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->addMockConnection($model);
 
         // $this->morphTo();
+        $model->setAttribute('morph_to_stub_type', EloquentModelSaveStub::class);
         $relation = $model->morphToStub();
         $this->assertSame('morph_to_stub_id', $relation->getForeignKeyName());
         $this->assertSame('morph_to_stub_type', $relation->getMorphType());
@@ -1497,6 +1622,11 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertSame('camelCased', $model->camelCased);
         $this->assertSame('StudlyCased', $model->StudlyCased);
 
+        $this->assertTrue($model->hasAppended('is_admin'));
+        $this->assertTrue($model->hasAppended('camelCased'));
+        $this->assertTrue($model->hasAppended('StudlyCased'));
+        $this->assertFalse($model->hasAppended('not_appended'));
+
         $model->setHidden(['is_admin', 'camelCased', 'StudlyCased']);
         $this->assertEquals([], $model->toArray());
 
@@ -1566,7 +1696,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testRelationshipTouchOwnersIsPropagated()
     {
-        $relation = $this->getMockBuilder(BelongsTo::class)->setMethods(['touch'])->disableOriginalConstructor()->getMock();
+        $relation = $this->getMockBuilder(BelongsTo::class)->onlyMethods(['touch'])->disableOriginalConstructor()->getMock();
         $relation->expects($this->once())->method('touch');
 
         $model = m::mock(EloquentModelStub::class.'[partner]');
@@ -1583,7 +1713,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testRelationshipTouchOwnersIsNotPropagatedIfNoRelationshipResult()
     {
-        $relation = $this->getMockBuilder(BelongsTo::class)->setMethods(['touch'])->disableOriginalConstructor()->getMock();
+        $relation = $this->getMockBuilder(BelongsTo::class)->onlyMethods(['touch'])->disableOriginalConstructor()->getMock();
         $relation->expects($this->once())->method('touch');
 
         $model = m::mock(EloquentModelStub::class.'[partner]');
@@ -1770,6 +1900,18 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertNan($model->floatAttribute);
     }
 
+    public function testMergeCastsMergesCasts()
+    {
+        $model = new EloquentModelCastingStub;
+
+        $castCount = count($model->getCasts());
+        $this->assertArrayNotHasKey('foo', $model->getCasts());
+
+        $model->mergeCasts(['foo' => 'date']);
+        $this->assertCount($castCount + 1, $model->getCasts());
+        $this->assertArrayHasKey('foo', $model->getCasts());
+    }
+
     public function testUpdatingNonExistentModelFails()
     {
         $model = new EloquentModelStub;
@@ -1811,7 +1953,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testIntKeyTypePreserved()
     {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with([], 'id')->andReturn(1);
         $query->shouldReceive('getConnection')->once();
@@ -1823,7 +1965,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testStringKeyTypePreserved()
     {
-        $model = $this->getMockBuilder(EloquentKeyTypeModelStub::class)->setMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
+        $model = $this->getMockBuilder(EloquentKeyTypeModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'refresh'])->getMock();
         $query = m::mock(Builder::class);
         $query->shouldReceive('insertGetId')->once()->with([], 'id')->andReturn('string id');
         $query->shouldReceive('getConnection')->once();
@@ -1957,12 +2099,6 @@ class DatabaseEloquentModelTest extends TestCase
         );
     }
 
-    /**
-     * Test that the getOriginal method on an Eloquent model also uses the casts array.
-     *
-     * @param void
-     * @return void
-     */
     public function testGetOriginalCastsAttributes()
     {
         $model = new EloquentModelCastingStub();
@@ -2010,8 +2146,8 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertEquals(0.443, $model->floatAttribute);
 
         $this->assertIsString($model->getOriginal('stringAttribute'));
-        $this->assertEquals('432', $model->getOriginal('stringAttribute'));
-        $this->assertEquals('12', $model->stringAttribute);
+        $this->assertSame('432', $model->getOriginal('stringAttribute'));
+        $this->assertSame('12', $model->stringAttribute);
 
         $this->assertIsBool($model->getOriginal('boolAttribute'));
         $this->assertTrue($model->getOriginal('boolAttribute'));
@@ -2034,6 +2170,14 @@ class DatabaseEloquentModelTest extends TestCase
 
         $this->assertEquals(['foo' => 'bar'], $model->getOriginal('collectionAttribute')->toArray());
         $this->assertEquals(['foo' => 'bar2'], $model->getAttribute('collectionAttribute')->toArray());
+    }
+
+    public function testUnsavedModel()
+    {
+        $user = new UnsavedModel;
+        $user->name = null;
+
+        $this->assertNull($user->name);
     }
 }
 
@@ -2069,7 +2213,7 @@ class EloquentModelStub extends Model
     public $scopesCalled = [];
     protected $table = 'stub';
     protected $guarded = [];
-    protected $morph_to_stub_type = EloquentModelSaveStub::class;
+    protected $casts = ['castedFloat' => 'float'];
 
     public function getListItemsAttribute($value)
     {
@@ -2188,7 +2332,7 @@ class EloquentDateModelStub extends EloquentModelStub
 class EloquentModelSaveStub extends Model
 {
     protected $table = 'save_stub';
-    protected $guarded = ['id'];
+    protected $guarded = [];
 
     public function save(array $options = [])
     {
@@ -2245,6 +2389,17 @@ class EloquentModelDestroyStub extends Model
         $mock->shouldReceive('whereIn')->once()->with('id', [1, 2, 3])->andReturn($mock);
         $mock->shouldReceive('get')->once()->andReturn([$model = m::mock(stdClass::class)]);
         $model->shouldReceive('delete')->once();
+
+        return $mock;
+    }
+}
+
+class EloquentModelEmptyDestroyStub extends Model
+{
+    public function newQuery()
+    {
+        $mock = m::mock(Builder::class);
+        $mock->shouldReceive('whereIn')->never();
 
         return $mock;
     }
@@ -2459,4 +2614,17 @@ class EloquentModelWithUpdatedAtNull extends Model
 {
     protected $table = 'stub';
     const UPDATED_AT = null;
+}
+
+class UnsavedModel extends Model
+{
+    protected $casts = ['name' => Uppercase::class];
+}
+
+class Uppercase implements CastsInboundAttributes
+{
+    public function set($model, string $key, $value, array $attributes)
+    {
+        return is_string($value) ? strtoupper($value) : $value;
+    }
 }

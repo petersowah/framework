@@ -16,7 +16,7 @@ class ResourceRegistrar
     /**
      * The default actions for a resourceful controller.
      *
-     * @var array
+     * @var string[]
      */
     protected $resourceDefaults = ['index', 'create', 'store', 'show', 'edit', 'update', 'destroy'];
 
@@ -95,9 +95,15 @@ class ResourceRegistrar
         $collection = new RouteCollection;
 
         foreach ($this->getResourceMethods($defaults, $options) as $m) {
-            $collection->add($this->{'addResource'.ucfirst($m)}(
+            $route = $this->{'addResource'.ucfirst($m)}(
                 $name, $base, $controller, $options
-            ));
+            );
+
+            if (isset($options['bindingFields'])) {
+                $this->setResourceBindingFields($route, $options['bindingFields']);
+            }
+
+            $collection->add($route);
         }
 
         return $collection;
@@ -230,6 +236,8 @@ class ResourceRegistrar
      */
     protected function addResourceShow($name, $base, $controller, $options)
     {
+        $name = $this->getShallowName($name, $options);
+
         $uri = $this->getResourceUri($name).'/{'.$base.'}';
 
         $action = $this->getResourceAction($name, $controller, 'show', $options);
@@ -248,6 +256,8 @@ class ResourceRegistrar
      */
     protected function addResourceEdit($name, $base, $controller, $options)
     {
+        $name = $this->getShallowName($name, $options);
+
         $uri = $this->getResourceUri($name).'/{'.$base.'}/'.static::$verbs['edit'];
 
         $action = $this->getResourceAction($name, $controller, 'edit', $options);
@@ -266,6 +276,8 @@ class ResourceRegistrar
      */
     protected function addResourceUpdate($name, $base, $controller, $options)
     {
+        $name = $this->getShallowName($name, $options);
+
         $uri = $this->getResourceUri($name).'/{'.$base.'}';
 
         $action = $this->getResourceAction($name, $controller, 'update', $options);
@@ -284,11 +296,45 @@ class ResourceRegistrar
      */
     protected function addResourceDestroy($name, $base, $controller, $options)
     {
+        $name = $this->getShallowName($name, $options);
+
         $uri = $this->getResourceUri($name).'/{'.$base.'}';
 
         $action = $this->getResourceAction($name, $controller, 'destroy', $options);
 
         return $this->router->delete($uri, $action);
+    }
+
+    /**
+     * Get the name for a given resource with shallowness applied when applicable.
+     *
+     * @param  string  $name
+     * @param  array  $options
+     * @return string
+     */
+    protected function getShallowName($name, $options)
+    {
+        return isset($options['shallow']) && $options['shallow']
+                    ? last(explode('.', $name))
+                    : $name;
+    }
+
+    /**
+     * Set the route's binding fields if the resource is scoped.
+     *
+     * @param  \Illuminate\Routing\Route  $route
+     * @param  array  $bindingFields
+     * @return void
+     */
+    protected function setResourceBindingFields($route, $bindingFields)
+    {
+        preg_match_all('/(?<={).*?(?=})/', $route->uri, $matches);
+
+        $fields = array_fill_keys($matches[0], null);
+
+        $route->setBindingFields(array_replace(
+            $fields, array_intersect_key($bindingFields, $fields)
+        ));
     }
 
     /**
@@ -365,6 +411,14 @@ class ResourceRegistrar
 
         if (isset($options['middleware'])) {
             $action['middleware'] = $options['middleware'];
+        }
+
+        if (isset($options['excluded_middleware'])) {
+            $action['excluded_middleware'] = $options['excluded_middleware'];
+        }
+
+        if (isset($options['wheres'])) {
+            $action['where'] = $options['wheres'];
         }
 
         return $action;

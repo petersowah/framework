@@ -60,7 +60,7 @@ class ModelMakeCommand extends GeneratorCommand
             $this->createSeeder();
         }
 
-        if ($this->option('controller') || $this->option('resource')) {
+        if ($this->option('controller') || $this->option('resource') || $this->option('api')) {
             $this->createController();
         }
     }
@@ -72,7 +72,7 @@ class ModelMakeCommand extends GeneratorCommand
      */
     protected function createFactory()
     {
-        $factory = Str::studly(class_basename($this->argument('name')));
+        $factory = Str::studly($this->argument('name'));
 
         $this->call('make:factory', [
             'name' => "{$factory}Factory",
@@ -108,7 +108,7 @@ class ModelMakeCommand extends GeneratorCommand
     {
         $seeder = Str::studly(class_basename($this->argument('name')));
 
-        $this->call('make:seed', [
+        $this->call('make:seeder', [
             'name' => "{$seeder}Seeder",
         ]);
     }
@@ -124,10 +124,11 @@ class ModelMakeCommand extends GeneratorCommand
 
         $modelName = $this->qualifyClass($this->getNameInput());
 
-        $this->call('make:controller', [
-            'name' => "{$controller}Controller",
-            '--model' => $this->option('resource') ? $modelName : null,
-        ]);
+        $this->call('make:controller', array_filter([
+            'name'  => "{$controller}Controller",
+            '--model' => $this->option('resource') || $this->option('api') ? $modelName : null,
+            '--api' => $this->option('api'),
+        ]));
     }
 
     /**
@@ -156,6 +157,17 @@ class ModelMakeCommand extends GeneratorCommand
     }
 
     /**
+     * Get the default namespace for the class.
+     *
+     * @param  string  $rootNamespace
+     * @return string
+     */
+    protected function getDefaultNamespace($rootNamespace)
+    {
+        return is_dir(app_path('Models')) ? $rootNamespace.'\\Models' : $rootNamespace;
+    }
+
+    /**
      * Get the console command options.
      *
      * @return array
@@ -171,6 +183,7 @@ class ModelMakeCommand extends GeneratorCommand
             ['seed', 's', InputOption::VALUE_NONE, 'Create a new seeder file for the model'],
             ['pivot', 'p', InputOption::VALUE_NONE, 'Indicates if the generated model should be a custom intermediate table model'],
             ['resource', 'r', InputOption::VALUE_NONE, 'Indicates if the generated controller should be a resource controller'],
+            ['api', null, InputOption::VALUE_NONE, 'Indicates if the generated controller should be an API controller'],
         ];
     }
 }

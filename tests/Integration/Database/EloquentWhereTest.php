@@ -3,6 +3,8 @@
 namespace Illuminate\Tests\Integration\Database;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\MultipleRecordsFoundException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
@@ -25,14 +27,14 @@ class EloquentWhereTest extends DatabaseTestCase
 
     public function testWhereAndWhereOrBehavior()
     {
-        /** @var UserWhereTest $firstUser */
+        /** @var \Illuminate\Tests\Integration\Database\UserWhereTest $firstUser */
         $firstUser = UserWhereTest::create([
             'name' => 'test-name',
             'email' => 'test-email',
             'address' => 'test-address',
         ]);
 
-        /** @var UserWhereTest $secondUser */
+        /** @var \Illuminate\Tests\Integration\Database\UserWhereTest $secondUser */
         $secondUser = UserWhereTest::create([
             'name' => 'test-name1',
             'email' => 'test-email1',
@@ -63,6 +65,74 @@ class EloquentWhereTest extends DatabaseTestCase
                     ->first()
             )
         );
+    }
+
+    public function testFirstWhere()
+    {
+        /** @var \Illuminate\Tests\Integration\Database\UserWhereTest $firstUser */
+        $firstUser = UserWhereTest::create([
+            'name' => 'test-name',
+            'email' => 'test-email',
+            'address' => 'test-address',
+        ]);
+
+        /** @var \Illuminate\Tests\Integration\Database\UserWhereTest $secondUser */
+        $secondUser = UserWhereTest::create([
+            'name' => 'test-name1',
+            'email' => 'test-email1',
+            'address' => 'test-address1',
+        ]);
+
+        $this->assertTrue($firstUser->is(UserWhereTest::firstWhere('name', '=', $firstUser->name)));
+        $this->assertTrue($firstUser->is(UserWhereTest::firstWhere('name', $firstUser->name)));
+        $this->assertTrue($firstUser->is(UserWhereTest::where('name', $firstUser->name)->firstWhere('email', $firstUser->email)));
+        $this->assertNull(UserWhereTest::where('name', $firstUser->name)->firstWhere('email', $secondUser->email));
+        $this->assertTrue($firstUser->is(UserWhereTest::firstWhere(['name' => 'test-name', 'email' => 'test-email'])));
+        $this->assertNull(UserWhereTest::firstWhere(['name' => 'test-name', 'email' => 'test-email1']));
+        $this->assertTrue($secondUser->is(
+            UserWhereTest::firstWhere(['name' => 'wrong-name', 'email' => 'test-email1'], null, null, 'or'))
+        );
+    }
+
+    public function testSole()
+    {
+        $expected = UserWhereTest::create([
+            'name' => 'test-name',
+            'email' => 'test-email',
+            'address' => 'test-address',
+        ]);
+
+        $this->assertTrue($expected->is(UserWhereTest::where('name', 'test-name')->sole()));
+    }
+
+    public function testSoleFailsForMultipleRecords()
+    {
+        UserWhereTest::create([
+            'name' => 'test-name',
+            'email' => 'test-email',
+            'address' => 'test-address',
+        ]);
+
+        UserWhereTest::create([
+            'name' => 'test-name',
+            'email' => 'other-email',
+            'address' => 'other-address',
+        ]);
+
+        $this->expectException(MultipleRecordsFoundException::class);
+
+        UserWhereTest::where('name', 'test-name')->sole();
+    }
+
+    public function testSoleFailsIfNoRecords()
+    {
+        try {
+            UserWhereTest::where('name', 'test-name')->sole();
+        } catch (ModelNotFoundException $exception) {
+            //
+        }
+
+        $this->assertSame(UserWhereTest::class, $exception->getModel());
     }
 }
 

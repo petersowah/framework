@@ -11,13 +11,25 @@ class SQLiteGrammar extends Grammar
     /**
      * All of the available clause operators.
      *
-     * @var array
+     * @var string[]
      */
     protected $operators = [
         '=', '<', '>', '<=', '>=', '<>', '!=',
         'like', 'not like', 'ilike',
         '&', '|', '<<', '>>',
     ];
+
+    /**
+     * Compile the lock into SQL.
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  bool|string  $value
+     * @return string
+     */
+    protected function compileLock(Builder $query, $value)
+    {
+        return '';
+    }
 
     /**
      * Wrap a union subquery in parentheses.
@@ -157,11 +169,72 @@ class SQLiteGrammar extends Grammar
      */
     protected function compileUpdateColumns(Builder $query, array $values)
     {
-        return collect($values)->map(function ($value, $key) {
+        $jsonGroups = $this->groupJsonColumnsForUpdate($values);
+
+        return collect($values)->reject(function ($value, $key) {
+            return $this->isJsonSelector($key);
+        })->merge($jsonGroups)->map(function ($value, $key) use ($jsonGroups) {
             $column = last(explode('.', $key));
 
-            return $this->wrap($column).' = '.$this->parameter($value);
+            $value = isset($jsonGroups[$key]) ? $this->compileJsonPatch($column, $value) : $this->parameter($value);
+
+            return $this->wrap($column).' = '.$value;
         })->implode(', ');
+    }
+
+    /**
+     * Compile an "upsert" statement into SQL.
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @param  array  $values
+     * @param  array  $uniqueBy
+     * @param  array  $update
+     * @return string
+     */
+    public function compileUpsert(Builder $query, array $values, array $uniqueBy, array $update)
+    {
+        $sql = $this->compileInsert($query, $values);
+
+        $sql .= ' on conflict ('.$this->columnize($uniqueBy).') do update set ';
+
+        $columns = collect($update)->map(function ($value, $key) {
+            return is_numeric($key)
+                ? $this->wrap($value).' = '.$this->wrapValue('excluded').'.'.$this->wrap($value)
+                : $this->wrap($key).' = '.$this->parameter($value);
+        })->implode(', ');
+
+        return $sql.$columns;
+    }
+
+    /**
+     * Group the nested JSON columns.
+     *
+     * @param  array  $values
+     * @return array
+     */
+    protected function groupJsonColumnsForUpdate(array $values)
+    {
+        $groups = [];
+
+        foreach ($values as $key => $value) {
+            if ($this->isJsonSelector($key)) {
+                Arr::set($groups, str_replace('->', '.', Str::after($key, '.')), $value);
+            }
+        }
+
+        return $groups;
+    }
+
+    /**
+     * Compile a "JSON" patch statement into SQL.
+     *
+     * @param  string  $column
+     * @param  mixed  $value
+     * @return string
+     */
+    protected function compileJsonPatch($column, $value)
+    {
+        return "json_patch(ifnull({$this->wrap($column)}, json('{}')), json({$this->parameter($value)}))";
     }
 
     /**
@@ -193,7 +266,11 @@ class SQLiteGrammar extends Grammar
      */
     public function prepareBindingsForUpdate(array $bindings, array $values)
     {
-        $values = collect($values)->map(function ($value) {
+        $groups = $this->groupJsonColumnsForUpdate($values);
+
+        $values = collect($values)->reject(function ($value, $key) {
+            return $this->isJsonSelector($key);
+        })->merge($groups)->map(function ($value) {
             return is_array($value) ? json_encode($value) : $value;
         })->all();
 
